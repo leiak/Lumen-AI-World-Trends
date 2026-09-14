@@ -10,6 +10,8 @@ import { createRssCollector } from './collectors/rss.js';
 import { REAL_SOURCES } from './collectors/registry.js';
 import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
 import { computeTrends } from './trends/engine.js';
+import { interpretCausal } from './ai/interpreter.js';
+import { createProvider } from './ai/provider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -54,7 +56,7 @@ function createWindow(): void {
       try {
         const info = await win.webContents.executeJavaScript(
           `JSON.stringify({
-             body: document.body ? document.body.innerText.slice(0, 300) : null,
+             body: document.body ? document.body.innerText.slice(0, 400) : null,
              hasLumen: typeof window.lumen
            })`
         );
@@ -91,7 +93,11 @@ void app.whenReady().then(async () => {
       ok: true,
       data: await buildGraphFromDb(getDb(), defaultGazetteer())
     }),
-    runTopics: async () => ({ ok: true, data: computeTrends(getDb()) })
+    runTopics: async () => ({ ok: true, data: computeTrends(getDb()) }),
+    runInsight: async () => ({
+      ok: true,
+      data: await interpretCausal(createProvider(process.env), computeTrends(getDb()))
+    })
   });
 
   createWindow();
