@@ -11,7 +11,8 @@ export default defineConfig({
     emptyOutDir: true,
     minify: false,
     rollupOptions: {
-      external: ['electron', ...builtinModules]
+      external: ['electron', 'sql.js', ...builtinModules]
     }
   }
 });
+

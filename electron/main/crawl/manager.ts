@@ -1,4 +1,4 @@
-import type { SourceArticle } from '../../shared/models.js';
+import type { SourceArticle } from '../../../shared/models.js';
 import type { Collector } from '../collectors/types.js';
 
 export interface CrawlError {
@@ -39,3 +39,4 @@ export function dedupById(articles: SourceArticle[]): SourceArticle[] {
   }
   return out;
 }
+

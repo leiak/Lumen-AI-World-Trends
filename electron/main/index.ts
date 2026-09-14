@@ -3,6 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getEngineStatus } from './engine.js';
 import { registerIpc } from './ipc/register.js';
+import { openDatabase } from './db/connection.js';
+import { setDb, getDb } from './state.js';
+import { runCrawl } from './db/persistence.js';
+import { createRssCollector } from './collectors/rss.js';
+import { REAL_SOURCES } from './collectors/registry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,9 +45,25 @@ function createWindow(): void {
   void target;
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   const dbPath = path.join(app.getPath('userData'), 'lumen.db');
-  registerIpc(() => getEngineStatus(true, dbPath, []));
+  let ready = true;
+  try {
+    setDb(await openDatabase(dbPath));
+  } catch (err) {
+    ready = false;
+    console.error('[lumen] database init failed', err);
+  }
+
+  registerIpc({
+    getStatus: () => getEngineStatus(ready, dbPath, REAL_SOURCES.map((s) => s.id)),
+    runManualCrawl: async () => {
+      const collectors = REAL_SOURCES.map((cfg) => createRssCollector(cfg));
+      const summary = await runCrawl(getDb(), collectors);
+      return { ok: true, data: summary };
+    }
+  });
+
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -52,4 +73,3 @@ void app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-

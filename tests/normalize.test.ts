@@ -4,7 +4,7 @@ import { articleId, normalizeArticle } from '../electron/main/collectors/ids.js'
 describe('normalizeArticle', () => {
   it('生成稳定 id 与 rawHash', () => {
     const a = normalizeArticle(
-      { id: 'bbc', name: 'BBC', lang: 'en', kind: 'rss', url: 'http://x/rss' },
+      { id: 'bbc', lang: 'en' },
       { title: 'Hello', url: 'http://x/1' }
     );
     expect(a.id).toBe(articleId('bbc', 'http://x/1', 'Hello'));
@@ -16,9 +16,10 @@ describe('normalizeArticle', () => {
   it('相同输入两次 id 相同', () => {
     const mk = () =>
       normalizeArticle(
-        { id: 'bbc', name: 'BBC', lang: 'en', kind: 'rss', url: 'http://x/rss' },
+        { id: 'bbc', lang: 'en' },
         { title: 'T', url: 'http://x/u' }
       );
     expect(mk().id).toBe(mk().id);
   });
 });
+
