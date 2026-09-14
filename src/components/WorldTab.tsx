@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
+import * as echarts from 'echarts';
 import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
 import EChart from './EChart';
+import { worldGeo, normalizeCountry, countriesToMapData } from '../world/geo';
 import type { TrendsResult } from '../../shared/trend';
 import type { CountryDetail, CountrySeriesResult } from '../../shared/world';
+
+echarts.registerMap('world', worldGeo as unknown as Parameters<typeof echarts.registerMap>[1]);
 
 export default function WorldTab() {
   const { t } = useI18n();
@@ -37,6 +41,15 @@ export default function WorldTab() {
   }
 
   const countries = list.data?.countries ?? [];
+  const mapData = countriesToMapData(countries.map((c) => ({ name: c.name, count: c.count })));
+  const mapMax = Math.max(1, ...mapData.map((d) => d.value));
+
+  function onMapClick(params: unknown) {
+    const name = (params as { name?: string }).name;
+    if (!name) return;
+    const canonical = countries.find((c) => normalizeCountry(c.name) === name)?.name ?? name;
+    toggleCountry(canonical);
+  }
 
   return (
     <section>
@@ -44,6 +57,43 @@ export default function WorldTab() {
         <h2>{t('world.title')}</h2>
         <p className="muted">{t('world.hint')}</p>
         <button className="btn primary" onClick={() => void list.run()}>{t('common.refresh')}</button>
+      </div>
+
+      <div className="card">
+        <h3>{t('world.map')}</h3>
+        <div className="chart-box tall">
+          <EChart
+            height={420}
+            deps={[list.data?.countries, t]}
+            onClick={onMapClick}
+            buildOption={() => ({
+              tooltip: { trigger: 'item' },
+              visualMap: {
+                min: 0,
+                max: mapMax,
+                calculable: true,
+                left: 16,
+                bottom: 16,
+                textStyle: { color: '#9aa4b2' },
+                inRange: { color: ['#161b22', '#3fb950', '#f0a04b', '#e0553a'] }
+              },
+              series: [
+                {
+                  type: 'map',
+                  map: 'world',
+                  roam: true,
+                  label: { show: false },
+                  itemStyle: { areaColor: '#1b232c', borderColor: '#30363d' },
+                  emphasis: {
+                    label: { show: true, color: '#fff' },
+                    itemStyle: { areaColor: '#f0a04b' }
+                  },
+                  data: mapData
+                }
+              ]
+            })}
+          />
+        </div>
       </div>
 
       <div className="card">

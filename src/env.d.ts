@@ -10,3 +10,8 @@ declare global {
 }
 
 export {};
+
+declare module '*.geojson' {
+  const value: unknown;
+  export default value;
+}

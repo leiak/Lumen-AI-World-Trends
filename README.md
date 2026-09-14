@@ -19,6 +19,7 @@
 - **事件图谱可视化**：以力导向图展示实体节点与共现边，可开/关事件节点（菱形）+ 事件→实体边，可拖拽、滚轮缩放。
 - **自动调度**：冷启动即自行跑一轮「采集→图谱→趋势」，此后每 30 分钟自动刷新（`LUMEN_INTERVAL_MINUTES` 可调）。
 - **双语界面**：中文/English 一键切换，选择本地记忆（`src/i18n/`，零新依赖）。
+- **世界热力地图**：世界 GeoJSON choropleth（110m），国家热度着色、可缩放拖动，点击区域联动国家详情/对比。
 - **本地缓存**：SQLite 落盘（`sql.js`），采集/建图/解读后与退出前自动持久化，离线可回看/检索。
 - **无服务端**：主进程 Node 完成采集/图谱/趋势/AI，渲染层仅展示；二者只走 Electron IPC，不监听任何端口。
 
@@ -145,8 +146,10 @@ lumen/
     index.ts             # 入口
   src/                   # 渲染层 (React)
     components/          # 总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索
+    world/               # 世界地图 GeoJSON 归一化/数据
     i18n/                # 中/英字典 + Provider(hook)
     hooks/               # useInvoke / useEngineStatus
+  resources/             # 世界 GeoJSON（110m，生成物）
   shared/                # 主/渲染共享类型与契约
   tests/                 # vitest 夹具测试
   docs/superpowers/      # specs + 里程碑计划 + 交付记录
@@ -161,7 +164,7 @@ lumen/
 ## 局限与路线图
 
 - **中文热点站（微博/知乎等）**：依赖 JS 渲染 + 反爬，当前未接；下一步可用无头浏览器型采集器适配。
-- **世界热力地图**：当前以国家横向柱状近似；接世界 GeoJSON 后可为 choropleth 地图。
+- **世界热力地图**：已实现 choropleth（110m 粒度）；大洲/更细行政区可换用 50m GeoJSON 重生成（`scripts/gen-world-geo.mjs`）。
 - **实体识别**：当前为词典 + 句法匹配；可升级为本地 NLP 或交给 AI 做更细抽取与上下位关系。
 - **图谱**：关系类型 v1 仅 `co-occurrence`；真正的因果/包含关系交给 AI 解读阶段。
 - **AI**：解读聚焦最热话题（≤400 字）；可按需扩展周报/月报样式与模型切换。
