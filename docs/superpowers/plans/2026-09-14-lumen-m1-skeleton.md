@@ -1,6 +1,6 @@
 # M1 Skeleton 实现计划 (Implementation Plan)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 产出可启动的 Electron + React 空壳，打通主进程 Node 与渲染层的 IPC，并初始化本地 SQLite 缓存。
 
@@ -36,7 +36,7 @@
 **Interfaces:**
 - Produces: 可 `npm run dev` 启动的 Electron 应用（空窗口标题 “Lumen”).
 
-- [ ] **Step 1: 初始化 package.json 与依赖脚本**
+- [x] **Step 1: 初始化 package.json 与依赖脚本**
 
 写入 `package.json`：
 ```json
@@ -71,7 +71,7 @@
 }
 ```
 
-- [ ] **Step 2: 创建 TS 与 Vite 配置**
+- [x] **Step 2: 创建 TS 与 Vite 配置**
 
 写入 `tsconfig.json`:
 ```json
@@ -114,7 +114,7 @@ export default defineConfig({
 </html>
 ```
 
-- [ ] **Step 3: 创建 Electron 主进程最小入口**
+- [x] **Step 3: 创建 Electron 主进程最小入口**
 
 写入 `electron/main/index.ts`:
 ```ts
@@ -157,7 +157,7 @@ app.on('window-all-closed', () => {
 
 Note: preload 文件由 Task 4 创建，此处路径先占位，Task 4 完成前 `dev` 运行主进程会因缺 preload 报错——因此本任务结束的验证只确认**目录与配置存在**，真正可启动在 Task 4 达成。
 
-- [ ] **Step 4: 创建渲染进程最小入口与 App**
+- [x] **Step 4: 创建渲染进程最小入口与 App**
 
 写入 `src/main.tsx`:
 ```tsx
@@ -176,7 +176,7 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 5: 创建 .gitignore 与 electron 主进程 vite 配置**
+- [x] **Step 5: 创建 .gitignore 与 electron 主进程 vite 配置**
 
 写入 `.gitignore`:
 ```
@@ -203,17 +203,17 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 6: 安装依赖（需联网）**
+- [x] **Step 6: 安装依赖（需联网）**
 
 Run: `npm install`
 说明：`better-sqlite3` 为原生模块会触发 postinstall 编译。如环境无网，向用户申请一次网络批准后执行。
 
-- [ ] **Step 7: 运行测试，确认空跑通过**
+- [x] **Step 7: 运行测试，确认空跑通过**
 
 Run: `npm test`
 Expected: vitest 提示 “No test files found”，退出码可控（0 或有 0 个用例）。此步是为 Task 2 起的 TDD 打通测试命令。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -240,7 +240,7 @@ git commit -m "chore: scaffold electron + react + vite skeleton"
 
 **Files 说明:** `shared/` 同时被主进程（tsc 出 es）与渲染进程（vite esm）包含，TypeScript 编译期校验类型一致性。
 
-- [ ] **Step 1: 写失败测试（校验类型注册表覆盖）**
+- [x] **Step 1: 写失败测试（校验类型注册表覆盖）**
 
 写入 `tests/contracts.test.ts`:
 ```ts
@@ -261,12 +261,12 @@ describe('IPC contract', () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认为失败**
+- [x] **Step 2: 运行测试确认为失败**
 
 Run: `npm test`
 Expected: 报 “Cannot find module ... contracts.js” (文件不存在)。
 
-- [ ] **Step 3: 实现契约文件**
+- [x] **Step 3: 实现契约文件**
 
 写入 `shared/contracts.ts`:
 ```ts
@@ -303,12 +303,12 @@ export interface IpcResponse<T = unknown> {
 export type IpcHandler = (payload: unknown) => IpcResponse<unknown>;
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test`
 Expected: 2 passed。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add shared/contracts.ts tests/contracts.test.ts
@@ -333,7 +333,7 @@ git commit -m "feat: define shared ipc contract types"
 
 **Files 说明:** `better-sqlite3` 原生模块，测试用 `:memory:`，运行期写 `data/lumen.db`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 写入 `tests/db.test.ts`:
 ```ts
@@ -367,12 +367,12 @@ describe('database', () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test`
 Expected: FAIL (module not found)。
 
-- [ ] **Step 3: 实现连接与迁移**
+- [x] **Step 3: 实现连接与迁移**
 
 写入 `electron/main/db/connection.ts`:
 ```ts
@@ -418,12 +418,12 @@ export function migrate(db: Database.Database): void {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test`
 Expected: 2 passed。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add electron/main/db tests/db.test.ts
@@ -450,7 +450,7 @@ git commit -m "feat: local sqlite data layer"
 
 **Files 说明:** 主进程侧用 `ipcMain.handle`，渲染侧用 `contextBridge.exposeInMainWorld`。测试只覆盖 `getEngineStatus` 纯函数。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 写入 `tests/engine.test.ts`:
 ```ts
@@ -467,12 +467,12 @@ describe('engine', () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test`
 Expected: FAIL (module not found)。
 
-- [ ] **Step 3: 实现引擎与 IPC 注册**
+- [x] **Step 3: 实现引擎与 IPC 注册**
 
 写入 `electron/main/engine.ts`:
 ```ts
@@ -510,7 +510,7 @@ contextBridge.exposeInMainWorld('lumen', {
 });
 ```
 
-- [ ] **Step 4: 修改主进程入口接通引擎**
+- [x] **Step 4: 修改主进程入口接通引擎**
 
 修改 `electron/main/index.ts`：在 `app.whenReady()` 内、`createWindow()` 之前加入：
 ```ts
@@ -528,17 +528,17 @@ void app.whenReady().then(() => {
 });
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `npm test`
 Expected: 全部通过。
 
-- [ ] **Step 6: 端到端冒烟（需显示窗口，人工确认）**
+- [x] **Step 6: 端到端冒烟（需显示窗口，人工确认）**
 
 Run: `npm run dev`
 Expected: 出现 Lumen 空窗口（标题 “Lumen”）。此步需图形环境，若 CI 无窗口可跳过。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add electron tests
@@ -560,7 +560,7 @@ git commit -m "feat: wire up ipc and engine status"
 
 **Files 说明:** `env.d.ts` 为 `window.lumen` 声明全局类型。
 
-- [ ] **Step 1: 写全局类型声明**
+- [x] **Step 1: 写全局类型声明**
 
 写入 `src/env.d.ts`:
 ```ts
@@ -577,7 +577,7 @@ declare global {
 export {};
 ```
 
-- [ ] **Step 2: 实现 hook**
+- [x] **Step 2: 实现 hook**
 
 写入 `src/hooks/useEngineStatus.ts`:
 ```ts
@@ -602,7 +602,7 @@ export function useEngineStatus(): {
 }
 ```
 
-- [ ] **Step 3: 修改 App 展示状态**
+- [x] **Step 3: 修改 App 展示状态**
 
 修改 `src/App.tsx`:
 ```tsx
@@ -628,12 +628,12 @@ export default function App() {
 
 Note: 本任务为 UI 展示，无单独单元测试；由 Task 4 的 `npm run dev` 冒烟验证（App 显示引擎状态）。
 
-- [ ] **Step 4: 类型检查**
+- [x] **Step 4: 类型检查**
 
 Run: `npx tsc -p tsconfig.json --noEmit`
 Expected: 无错误。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src
@@ -650,3 +650,15 @@ git commit -m "feat: render engine status in react shell"
 
 ## 交付检查
 - M1 完成后应有：可 `npm run dev` 启动的空壳、`window.lumen` IPC 可用、本地 `lumen.db` 在建库路径生成。
+
+---
+
+## M1 交付记录（2026-09-14）
+- Task 1 commit `8cd67da` · Task 2 `8f8886a` · Task 3 `ff6d184` · Task 4 `5033ccc` · Task 5 `8a9a5a3`
+- 测试 `npm test`：5/5 通过（contract / db / engine）。
+- `npm run build`：renderer（`dist/`）+ electron 主进程（`dist-electron/index.js`）+ preload 拷贝均成功。
+- 端到端冒烟：`LUMEN_SMOKE_OK {"ok":true,"data":{"ready":true,"dbPath":"...userData\\lumen.db","sources":[]}}`。
+
+## Rulings（裁定记录）
+- **Ruling 1 — SQLite 库改 `sql.js`**：`better-sqlite3` 预编译下载持续 ECONNRESET（GitHub 源）且本机缺 VS C++ 工具链无法源码编译；改用纯 JS/WASM 的 `sql.js`，零原生编译、更易跨机运行。`sql.js` 需手动 `saveDatabase` 持久化、取行前先 `stmt.step()`（接口差异）。若误判，代价是后续需在数据层替换持久化实现。
+- **Ruling 2 — Electron 主进程用 SSR 构建**：Vite 默认浏览器目标会把 `node:path/node:url` 打成空浏览器垫片导致构建失败；改 `build.ssr` 目标 node，产物扁平化为 `dist-electron/index.js`，并据此修正 `package.json#main` 与主进程相对路径。若误判，代价是打包分发需重新评估产物布局。
