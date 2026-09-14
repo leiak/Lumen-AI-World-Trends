@@ -6,7 +6,8 @@ export const ALL_CHANNELS = [
   'timeline:replay',
   'insights:generate',
   'search:fulltext',
-  'collector:manualRun'
+  'collector:manualRun',
+  'graph:build'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

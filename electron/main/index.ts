@@ -8,6 +8,7 @@ import { setDb, getDb } from './state.js';
 import { runCrawl } from './db/persistence.js';
 import { createRssCollector } from './collectors/rss.js';
 import { REAL_SOURCES } from './collectors/registry.js';
+import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,7 +90,11 @@ void app.whenReady().then(async () => {
       const collectors = REAL_SOURCES.map((cfg) => createRssCollector(cfg));
       const summary = await runCrawl(getDb(), collectors);
       return { ok: true, data: summary };
-    }
+    },
+    runGraphBuild: async () => ({
+      ok: true,
+      data: await buildGraphFromDb(getDb(), defaultGazetteer())
+    })
   });
 
   createWindow();
@@ -101,6 +106,3 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-
-
-
