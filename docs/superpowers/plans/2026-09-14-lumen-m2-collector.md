@@ -1,6 +1,6 @@
 # M2 采集层实现计划 (Implementation Plan)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 在 M1 骨架上打通「采集 → 标准化去重 → 本地入库 → 增量游标 → IPC 手动触发」的采集引擎闭环，全程用夹具测试、不依赖真实网络。
 
@@ -38,7 +38,7 @@
     - `articleId(source, url, title): string`（sha1 hex）
     - `normalizeArticle(cfg: Omit<SourceConfig,'itemSelector'>, part: { title; url; content?; publishedAt? }): SourceArticle`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 写入 `tests/normalize.test.ts`:
 ```ts
@@ -71,12 +71,12 @@ describe('normalizeArticle', () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test`
 Expected: FAIL（模块不存在）。
 
-- [ ] **Step 3: 实现模型与标准化**
+- [x] **Step 3: 实现模型与标准化**
 
 写入 `shared/models.ts`、`electron/main/collectors/types.ts`、`electron/main/collectors/ids.ts`（内容见上文 Interfaces）。
 
@@ -101,12 +101,12 @@ export function normalizeArticle(
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add shared electron/main/collectors tests
@@ -129,7 +129,7 @@ git commit -m "feat: article model and normalization"
 
 **Files 说明:** 默认 `loadXml` 用 `axios` 请求；测试注入读取 fixture 的 loader，`item.title/link` 对应 `SourceArticle` 的 `title/url`。
 
-- [ ] **Step 1: 写失败测试 + fixture**
+- [x] **Step 1: 写失败测试 + fixture**
 
 写入 `tests/fixtures/rss.xml`（内含 2 条 item，各自 title+link+pubDate）。
 
@@ -158,12 +158,12 @@ describe('rss collector', () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test`
 Expected: FAIL（模块不存在）。
 
-- [ ] **Step 3: 实现 RSS 适配器**
+- [x] **Step 3: 实现 RSS 适配器**
 
 写入 `electron/main/collectors/rss.ts`:
 ```ts
@@ -198,12 +198,12 @@ export function createRssCollector(config: SourceConfig, loadXml: LoadXml = defa
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add electron tests
@@ -227,15 +227,15 @@ git commit -m "feat: rss collector adapter"
 - 若 `config.itemSelector` 为空 → 抛 `Error('itemSelector required')`。
 - 每个 item 取 `titleSelector` 文本为标题、`linkSelector` 的 `href` 为 URL（相对地址用 `new URL(href, config.url)` 解析）；`contentSelector` 可选。
 
-- [ ] **Step 1: 写失败测试 + fixture**
+- [x] **Step 1: 写失败测试 + fixture**
 
 写入 `tests/fixtures/page.html`（一个列表页，含 2 个 item，标题/链接/正文）。写入 `tests/html.test.ts`（断言 `collect()` 返回 2 条、标题与 URL 正确、用 fixture loader）。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test`  → FAIL。
 
-- [ ] **Step 3: 实现 HTML 适配器**
+- [x] **Step 3: 实现 HTML 适配器**
 
 `electron/main/collectors/html.ts` 用 `axios`（默认 loader）+ `cheerio`：
 ```ts
@@ -269,11 +269,11 @@ export function createHtmlCollector(config: SourceConfig, loadHtml: LoadHtml = d
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test` → PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add electron tests
@@ -297,24 +297,24 @@ git commit -m "feat: html collector adapter"
   - `dedupById(articles: SourceArticle[]): SourceArticle[]`（保留首个出现）
   - `registry`：`RealCollectors(): Collector[]`（可被测试覆盖用的占位导出）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 写入 `tests/manager.test.ts`：用两个 fixture collector（返回部分重复文章）断言 `runCollectors` 返回 `{articles, errors}`、`dedupById` 去重到唯一 id 数。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test` → FAIL。
 
-- [ ] **Step 3: 实现 manager 与 registry**
+- [x] **Step 3: 实现 manager 与 registry**
 
 `manager.ts` 逐源 `try/catch` 采集，收集错误为 `{sourceId, message}`，`dedupById` 用 `Set` 按 `id` 保留首个。
 `registry.ts` 导出国际 RSS 源配置（BBC/Guardian/NYT），供后续接入真实采集；`lang` 均 `en`。中文 JS 热点站适配留待后续里程碑。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test` → PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add electron tests
@@ -342,27 +342,27 @@ git commit -m "feat: collect manager with dedup"
   - `runCrawl(db, collectors, opts?): Promise<{ addedFetched: number; addedNew: number; dupes: number; errors: {sourceId; message}[] }>`
   - IPC `collector:manualRun` → `IpcResponse<CrawlSummary>`
 
-- [ ] **Step 1: 更新迁移 + 测试（schema v2）**
+- [x] **Step 1: 更新迁移 + 测试（schema v2）**
 
 修改 `migrate.ts` 增加 `source_article` DDL，版本置 `'2'`。更新 `tests/db.test.ts` 断言。
 
-- [ ] **Step 2: 写持久化 + 增量测试**
+- [x] **Step 2: 写持久化 + 增量测试**
 
 写入 `tests/persistence.test.ts`：内存库跑 `migrate`，`insertArticles` 两次相同文章 → 第二次插入 0；`runCrawl` 用 fixture collector，断言首次 `addedNew=2`、再次 `addedNew=0, dupes=2`。
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 Run: `npm test` → FAil（persistence 模块不存在）。
 
-- [ ] **Step 4: 实现 persistence 与 manualRun**
+- [x] **Step 4: 实现 persistence 与 manualRun**
 
 实现 `persistence.ts`（`runCrawl` 先 `getExistingHashes` → `runCollectors` → `dedup` 剔除已存在 → `insertArticles` → `upsertSourceState`）。在 `register.ts` 增加 `collector:manualRun` handler（调用 `runCrawl` 返回统计）。`index.ts` 里初始化 db 并传入。
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `npm test` → PASS；`npx tsc --noEmit` 无错。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -376,3 +376,14 @@ git commit -m "feat: persistence, incremental crawl, ipc manualRun"
 - **占位符扫描**：每个代码步均给实际代码或明确接口，无 TBD。
 - **类型一致性**：`SourceArticle`、`SourceConfig`、`Collector`、`runCrawl` 在各任务间签名一致，单一定义在 `shared/models.ts` 与 `collectors/types.ts`。
 - **决议（Ruling 待记录）**：中文 JS 热点站无法纯 HTML 采集，纳入后续里程碑；M2 落地引擎 + 国际 RSS/HTML 适配。
+
+---
+
+## M2 交付记录（2026-09-14）
+- Task 1 `9857c05`（文章模型+标准化）· Task 2 `eb8e9fb`（RSS 适配器）· Task 3 `3036d38`（HTML 适配器）· Task 4 `c5ad7d7`（采集管理+去重）· Task 5 `3a5eb71`（持久化+增量+IPC）
+- `npm test`：14/14 通过（contract / db / normalize / rss / html / manager / persistence / engine）。
+- `npm run build`：成功；冒烟 `LUMEN_SMOKE_OK {"ready":true,"sources":["bbc-world","guardian-world","nyt-world"]}`，sql.js 库在 Electron 运行时真实打开、IPC 工作正常。
+
+## Rulings（裁定记录）
+- **Ruling 3 — 中文 JS 热点站本轮不接**：微博/知乎等依赖 JS 渲染与反爬，纯 HTML 采集不可行；M2 落地引擎 + 国际 RSS（BBC/Guardian/NYT）+ 通用 HTML 适配器，中文热点站适配留待后续里程碑。若误判，代价是后续补 JS 渲染采集器（如无头浏览器）。
+- **Ruling 4 — 真实外网采集不在 CI/测试验证**：本机网络对 GitHub/部分站点不稳定；采集逻辑全部以 fixture/内存库夹具驱动验证，真实网络采集由 `collector:manualRun` 在用户侧手动触发。若误判，代价是真实站点解析差异可能滞后暴露。
