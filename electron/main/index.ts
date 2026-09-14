@@ -19,9 +19,17 @@ function createWindow(): void {
   });
 
   if (process.env.LUMEN_SMOKE === '1') {
-    win.webContents.once('did-finish-load', () => {
-      console.log('LUMEN_SMOKE_OK');
-      app.quit();
+    win.webContents.once('did-finish-load', async () => {
+      try {
+        const status = await win.webContents.executeJavaScript(
+          'window.lumen ? window.lumen.getEngineStatus() : Promise.resolve(null)'
+        );
+        console.log('LUMEN_SMOKE_OK', JSON.stringify(status));
+      } catch (err) {
+        console.error('LUMEN_SMOKE_FAIL', String(err));
+      } finally {
+        app.quit();
+      }
     });
   }
 
@@ -44,3 +52,4 @@ void app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
