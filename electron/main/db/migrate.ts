@@ -62,12 +62,25 @@ CREATE INDEX IF NOT EXISTS idx_edge_source ON graph_edge(source);
 CREATE INDEX IF NOT EXISTS idx_article_event_article ON article_event(article_id);
 `;
 
+const MIGRATION_4 = `
+CREATE TABLE IF NOT EXISTS article_entity (
+  article_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  crawled_at TEXT NOT NULL,
+  PRIMARY KEY (article_id, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_article_entity_crawled ON article_entity(crawled_at);
+`;
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
   db.exec(MIGRATION_3);
+  db.exec(MIGRATION_4);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '3');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '4');`
   );
 }
+
+

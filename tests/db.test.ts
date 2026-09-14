@@ -20,6 +20,7 @@ describe('database', () => {
     expect(tables).toContain('entity');
     expect(tables).toContain('event');
     expect(tables).toContain('graph_edge');
+    expect(tables).toContain('article_entity');
   });
 
   it('写入 schema_version = 2', () => {
@@ -28,7 +29,8 @@ describe('database', () => {
     const row = stmt.getAsObject() as { value: string };
     stmt.free();
     expect(has).toBe(true);
-    expect(row.value).toBe('3');
+    expect(row.value).toBe('4');
   });
 });
+
 

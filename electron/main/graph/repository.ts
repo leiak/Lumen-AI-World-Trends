@@ -36,6 +36,24 @@ export function saveEvents(db: Database, bundles: EventBundle[]): number {
   return n;
 }
 
+export function saveArticleEntities(
+  db: Database,
+  articleId: string,
+  entities: NamedEntity[],
+  crawledAt: string
+): number {
+  const stmt = db.prepare(
+    'INSERT OR IGNORE INTO article_entity (article_id, entity_id, crawled_at) VALUES (?, ?, ?)'
+  );
+  let n = 0;
+  for (const e of entities) {
+    stmt.run([articleId, e.name.toLowerCase(), crawledAt]);
+    if (db.getRowsModified() > 0) n++;
+  }
+  stmt.free();
+  return n;
+}
+
 export function saveArticleEvents(db: Database, bundle: EventBundle): void {
   const ae = db.prepare(
     'INSERT OR IGNORE INTO article_event (article_id, event_id) VALUES (?, ?)'
@@ -90,4 +108,5 @@ export function loadArticles(db: Database, limit = 200): SourceArticle[] {
   stmt.free();
   return out;
 }
+
 

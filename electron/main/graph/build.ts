@@ -4,7 +4,11 @@ import { createGazetteer, type Gazetteer, type GazetteerEntry } from '../extract
 import { clusterArticles } from './cluster.js';
 import { buildCooccurrenceEdges } from './relation.js';
 import {
-  saveEntities, saveEvents, mergeEdges, loadArticles
+  saveEntities,
+  saveEvents,
+  saveArticleEntities,
+  mergeEdges,
+  loadArticles
 } from './repository.js';
 
 export interface GraphBuildResult {
@@ -49,6 +53,10 @@ export async function buildGraph(
   const allEntities = items.flatMap((i) => i.entities);
   const entities = saveEntities(db, allEntities);
 
+  for (const it of items) {
+    saveArticleEntities(db, it.article.id, it.entities, it.article.crawledAt);
+  }
+
   const events = saveEvents(db, bundles);
 
   const edges: ReturnType<typeof buildCooccurrenceEdges> = [];
@@ -67,4 +75,3 @@ export async function buildGraphFromDb(
 ): Promise<GraphBuildResult> {
   return buildGraph(db, loadArticles(db, limit), gazetteer);
 }
-
