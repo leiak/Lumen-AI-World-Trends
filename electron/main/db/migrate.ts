@@ -28,11 +28,46 @@ CREATE INDEX IF NOT EXISTS idx_article_source ON source_article(source);
 CREATE INDEX IF NOT EXISTS idx_article_crawled ON source_article(crawled_at);
 `;
 
+const MIGRATION_3 = `
+CREATE TABLE IF NOT EXISTS entity (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  name_en TEXT,
+  type TEXT NOT NULL,
+  lang TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS event (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  summary TEXT,
+  occurred_at TEXT,
+  lang TEXT
+);
+CREATE TABLE IF NOT EXISTS article_event (
+  article_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  PRIMARY KEY (article_id, event_id)
+);
+CREATE TABLE IF NOT EXISTS graph_edge (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  target TEXT NOT NULL,
+  event_id TEXT,
+  relation_type TEXT NOT NULL,
+  weight INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT,
+  last_seen_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_edge_source ON graph_edge(source);
+CREATE INDEX IF NOT EXISTS idx_article_event_article ON article_event(article_id);
+`;
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
+  db.exec(MIGRATION_3);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '2');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '3');`
   );
 }

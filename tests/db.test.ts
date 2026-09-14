@@ -17,6 +17,9 @@ describe('database', () => {
     expect(tables).toContain('meta');
     expect(tables).toContain('source_state');
     expect(tables).toContain('source_article');
+    expect(tables).toContain('entity');
+    expect(tables).toContain('event');
+    expect(tables).toContain('graph_edge');
   });
 
   it('写入 schema_version = 2', () => {
@@ -25,6 +28,7 @@ describe('database', () => {
     const row = stmt.getAsObject() as { value: string };
     stmt.free();
     expect(has).toBe(true);
-    expect(row.value).toBe('2');
+    expect(row.value).toBe('3');
   });
 });
+
