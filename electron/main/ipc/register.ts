@@ -3,6 +3,8 @@ import type { EngineStatus, IpcResponse } from '../../../shared/contracts.js';
 import type { TrendsResult } from '../../../shared/trend.js';
 import type { Insight } from '../../../shared/insight.js';
 import type { SourceArticle } from '../../../shared/models.js';
+import type { TimelineEvent } from '../../../shared/timeline.js';
+import type { GraphView } from '../../../shared/graph-view.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
 
@@ -13,6 +15,8 @@ export interface IpcDeps {
   runTopics?: () => Promise<IpcResponse<TrendsResult>>;
   runInsight?: () => Promise<IpcResponse<Insight>>;
   runSearch?: (payload: unknown) => Promise<IpcResponse<SourceArticle[]>>;
+  runTimeline?: () => Promise<IpcResponse<TimelineEvent[]>>;
+  runGraphQuery?: (payload: unknown) => Promise<IpcResponse<GraphView>>;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -20,19 +24,14 @@ export function registerIpc(deps: IpcDeps): void {
     ok: true,
     data: deps.getStatus()
   }));
-  if (deps.runManualCrawl) {
-    ipcMain.handle('collector:manualRun', async () => deps.runManualCrawl!());
-  }
-  if (deps.runGraphBuild) {
-    ipcMain.handle('graph:build', async () => deps.runGraphBuild!());
-  }
-  if (deps.runTopics) {
-    ipcMain.handle('topics:list', async () => deps.runTopics!());
-  }
-  if (deps.runInsight) {
-    ipcMain.handle('insights:generate', async () => deps.runInsight!());
-  }
-  if (deps.runSearch) {
-    ipcMain.handle('search:fulltext', async (_e, payload) => deps.runSearch!(payload));
-  }
+  const attach = (channel: string, fn: () => Promise<unknown>): void => {
+    ipcMain.handle(channel, () => fn());
+  };
+  if (deps.runManualCrawl) attach('collector:manualRun', deps.runManualCrawl);
+  if (deps.runGraphBuild) attach('graph:build', deps.runGraphBuild);
+  if (deps.runTopics) attach('topics:list', deps.runTopics);
+  if (deps.runInsight) attach('insights:generate', deps.runInsight);
+  if (deps.runTimeline) attach('timeline:replay', deps.runTimeline);
+  if (deps.runSearch) ipcMain.handle('search:fulltext', (_e, payload) => deps.runSearch!(payload));
+  if (deps.runGraphQuery) ipcMain.handle('graph:query', (_e, payload) => deps.runGraphQuery!(payload));
 }

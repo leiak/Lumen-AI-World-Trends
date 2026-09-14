@@ -1,6 +1,6 @@
 # M6 看板实现计划 (Implementation Plan)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 把 M1–M5 的能力接入渲染层看板：可点操作（手动采集/构建图谱/生成解读/拉趋势）+ 本地全文检索，并用 ECharts 呈现趋势曲线与世界热点，成为可用的桌面情报台。
 
@@ -31,11 +31,11 @@
 - Produces: `searchArticles(db, query: string, limit?: number): SourceArticle[]`（`title LIKE %q% OR content LIKE %q%`，按 crawled_at 降序）。
 - IPC：`search:fulltext` handler，payload `{ query }`。
 
-- [ ] **Step 1: 写失败测试**（插入 2 篇文章，查询命中标题 vs 内容，断言返回与数量）
-- [ ] **Step 2: 运行测试确认失败** → FAIL
-- [ ] **Step 3: 实现 `searchArticles`（复用 `loadArticles` 的行映射）+ register + index**
-- [ ] **Step 4: 运行测试确认通过** → PASS；`tsc` 无错
-- [ ] **Step 5: Commit** `feat: fulltext search ipc`
+- [x] **Step 1: 写失败测试**（插入 2 篇文章，查询命中标题 vs 内容，断言返回与数量）
+- [x] **Step 2: 运行测试确认失败** → FAIL
+- [x] **Step 3: 实现 `searchArticles`（复用 `loadArticles` 的行映射）+ register + index**
+- [x] **Step 4: 运行测试确认通过** → PASS；`tsc` 无错
+- [x] **Step 5: Commit** `feat: fulltext search ipc`
 
 ---
 
@@ -50,9 +50,9 @@
 - `useInvoke<T>(channel, payload?, deps) → { data, error, loading, run }`
 - `App.tsx` 维护 `activeTab`，渲染各 tab 组件。
 
-- [ ] **Step 1: 实现 useInvoke 与 tab 壳**（no test；`tsc` 校验）
-- [ ] **Step 2: `npx tsc` 无错**
-- [ ] **Step 3: Commit** `feat: renderer shell with tabs`
+- [x] **Step 1: 实现 useInvoke 与 tab 壳**（no test；`tsc` 校验）
+- [x] **Step 2: `npx tsc` 无错**
+- [x] **Step 3: Commit** `feat: renderer shell with tabs`
 
 ---
 
@@ -63,9 +63,9 @@
 
 **内容：** 引擎状态、按钮「手动采集 / 构建图谱 / 生成解读」（分别调 `collector:manualRun`、`graph:build`、`insights:generate`），展示返回结果；解读卡片显示 `insight.content`。
 
-- [ ] **Step 1: 实现 DashboardTab**（tsc）
-- [ ] **Step 2: `npx tsc` 无错**
-- [ ] **Step 3: Commit** `feat: dashboard tab with actions`
+- [x] **Step 1: 实现 DashboardTab**（tsc）
+- [x] **Step 2: `npx tsc` 无错**
+- [x] **Step 3: Commit** `feat: dashboard tab with actions`
 
 ---
 
@@ -78,9 +78,9 @@
 
 **内容：** `topics:list` 数据；趋势用折线（x=桶时间，series=top 话题），世界用`countries` 前若干做横向 bar（近似热力，附色阶）。
 
-- [ ] **Step 1: 实现 chart helper + 两 tab**（tsc）
-- [ ] **Step 2: `npx tsc` 无错；`npm run build` 成功**
-- [ ] **Step 3: Commit** `feat: trends + world charts`
+- [x] **Step 1: 实现 chart helper + 两 tab**（tsc）
+- [x] **Step 2: `npx tsc` 无错；`npm run build` 成功**
+- [x] **Step 3: Commit** `feat: trends + world charts`
 
 ---
 
@@ -93,9 +93,9 @@
 - `npm test`、`npx tsc`、`npm run build`、`LUMEN_SMOKE`（渲染层 DOM 校验含导航 tab 文案）
 - 更新 M6 计划交付记录与裁定
 
-- [ ] **Step 1: 实现 SearchTab**
-- [ ] **Step 2: 全量验证**（test/tsc/build/smoke）
-- [ ] **Step 3: Commit** `feat: search tab + dashboard`
+- [x] **Step 1: 实现 SearchTab**
+- [x] **Step 2: 全量验证**（test/tsc/build/smoke）
+- [x] **Step 3: Commit** `feat: search tab + dashboard`
 
 ---
 
@@ -104,3 +104,17 @@
 - **占位符扫描**：无 TBD。
 - **类型一致性**：`SourceArticle`、`TrendsResult`、`GraphBuildResult`、`Insight` 均已在 shared 单一定义，渲染层复用。
 - **世界热力图**：v1 以国家横向柱状近似（对 `countries` 排序着色），完整 choropleth 世界地图留待后续（需地理 GeoJSON 资源）。
+
+---
+
+## M6 交付记录（2026-09-14）
+- Task 1 `134ec52`（全文检索 IPC）· Task 2–5 `955afe6`（渲染层 tab 壳 + 总览/趋势/世界/检索 + echarts + 相对资源基路径修复）
+- `npm test`：33/33 通过、`npx tsc` 无错、`npm run build` 成功；生产冒烟确认看板渲染：导航「总览/趋势/世界/检索」+ 引擎状态正常显示。
+
+## 关键修复（Ruling）
+- **Ruling 14 — Vite 构建必须用相对基路径**：`dist/index.html` 默认输出 `/assets/*` 绝对路径，Electron `loadFile`（`file://`）下无法加载导致白屏；设 `base: './'` 后修复。
+- **Ruling 15 — 世界热力图 v1 用国家横向柱状近似**：完整 choropleth 世界地图需世界 GeoJSON 资源，留待后续。
+- **Ruling 16 — 渲染层暂用 useState tab，不引路由/zustand**：保持轻量。
+
+## 里程碑状态
+M1 骨架 ✅ M2 采集 ✅ M3 图谱 ✅ M4 趋势 ✅ M5 AI ✅ M6 看板 ✅

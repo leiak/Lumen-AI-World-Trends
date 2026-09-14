@@ -8,11 +8,16 @@ import { setDb, getDb } from './state.js';
 import { runCrawl } from './db/persistence.js';
 import { createRssCollector } from './collectors/rss.js';
 import { REAL_SOURCES } from './collectors/registry.js';
-import { searchArticles } from './graph/repository.js';
+import {
+  searchArticles,
+  listEvents,
+  queryGraph
+} from './graph/repository.js';
+import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
 import { computeTrends } from './trends/engine.js';
 import { interpretCausal } from './ai/interpreter.js';
 import { createProvider } from './ai/provider.js';
-import { buildGraphFromDb as buildGraph, defaultGazetteer } from './graph/build.js';
+import { startScheduler, resolveIntervalMs } from './scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,6 +26,7 @@ function createWindow(): void {
     width: 1360,
     height: 860,
     title: 'Lumen',
+    backgroundColor: '#0f1419',
     webPreferences: {
       preload: path.join(__dirname, 'preload/index.cjs'),
       contextIsolation: true,
@@ -74,7 +80,7 @@ void app.whenReady().then(async () => {
     },
     runGraphBuild: async () => ({
       ok: true,
-      data: await buildGraph(getDb(), defaultGazetteer())
+      data: await buildGraphFromDb(getDb(), defaultGazetteer())
     }),
     runTopics: async () => ({ ok: true, data: computeTrends(getDb()) }),
     runInsight: async () => ({
@@ -87,7 +93,27 @@ void app.whenReady().then(async () => {
           ? String((payload as { query?: string }).query ?? '')
           : '';
       return { ok: true, data: searchArticles(getDb(), q) };
+    },
+    runTimeline: async () => ({ ok: true, data: listEvents(getDb()) }),
+    runGraphQuery: async (payload) => {
+      const topN =
+        typeof payload === 'object' && payload
+          ? Number((payload as { topN?: number }).topN) || 20
+          : 20;
+      return { ok: true, data: queryGraph(getDb(), topN) };
     }
+  });
+
+  startScheduler({
+    job: async () => {
+      const db = getDb();
+      const collectors = REAL_SOURCES.map((cfg) => createRssCollector(cfg));
+      await runCrawl(db, collectors);
+      await buildGraphFromDb(db, defaultGazetteer());
+      computeTrends(db);
+    },
+    intervalMs: resolveIntervalMs(process.env),
+    onError: (e) => console.error('[lumen] auto job failed', e)
   });
 
   createWindow();
@@ -99,5 +125,3 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-
-
