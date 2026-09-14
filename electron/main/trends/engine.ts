@@ -88,3 +88,47 @@ export function computeHeatmap(db: Database, opts: TrendOptions = {}): CountryHe
   return computeTrends(db, opts).countries;
 }
 
+export interface EntitySeries {
+  name: string;
+  points: TrendPoint[];
+}
+
+export function computeEntitySeries(
+  db: Database,
+  names: string[],
+  opts: TrendOptions = {}
+): EntitySeries[] {
+  const nowIso = opts.now ?? new Date().toISOString();
+  const now = Date.parse(nowIso);
+  const horizonMs = opts.horizonMs ?? 7 * DAY;
+  const bucketCount = opts.bucketCount ?? 8;
+  const start = now - horizonMs;
+  const width = Math.floor(horizonMs / bucketCount);
+  const startIso = new Date(start).toISOString();
+
+  const out: EntitySeries[] = [];
+  for (const name of names) {
+    const stmt = db.prepare(
+      `SELECT ae.crawled_at AS crawled_at
+       FROM article_entity ae JOIN entity e ON e.id = ae.entity_id
+       WHERE e.name = ? AND ae.crawled_at >= ?`
+    );
+    stmt.bind([name, startIso]);
+    const buckets = new Array<number>(bucketCount).fill(0);
+    while (stmt.step()) {
+      const r = stmt.getAsObject() as unknown as { crawled_at: string };
+      const idx = Math.min(bucketCount - 1, Math.floor((Date.parse(r.crawled_at) - start) / width));
+      buckets[idx]++;
+    }
+    stmt.free();
+    out.push({
+      name,
+      points: buckets.map((c, i) => ({
+        bucketStart: new Date(start + i * width).toISOString(),
+        count: c
+      }))
+    });
+  }
+  return out;
+}
+

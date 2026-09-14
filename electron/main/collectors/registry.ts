@@ -21,5 +21,19 @@ export const REAL_SOURCES: SourceConfig[] = [
     lang: 'en',
     kind: 'rss',
     url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml'
+  },
+  {
+    id: '36kr',
+    name: '36氪',
+    lang: 'zh',
+    kind: 'rss',
+    url: 'https://36kr.com/feed'
+  },
+  {
+    id: 'ithome',
+    name: 'IT之家',
+    lang: 'zh',
+    kind: 'rss',
+    url: 'https://www.ithome.com/rss/'
   }
 ];

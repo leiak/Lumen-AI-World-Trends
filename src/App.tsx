@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { I18nProvider, useI18n } from './i18n/I18n';
 import DashboardTab from './components/DashboardTab';
 import TimelineTab from './components/TimelineTab';
 import GraphTab from './components/GraphTab';
@@ -6,35 +7,44 @@ import InsightsTab from './components/InsightsTab';
 import TrendsTab from './components/TrendsTab';
 import WorldTab from './components/WorldTab';
 import SearchTab from './components/SearchTab';
+import type { I18nKey } from './i18n/dict';
 
 type Tab = 'dashboard' | 'timeline' | 'graph' | 'insights' | 'trends' | 'world' | 'search';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'dashboard', label: '总览' },
-  { id: 'timeline', label: '时间线' },
-  { id: 'graph', label: '图谱' },
-  { id: 'insights', label: '解读' },
-  { id: 'trends', label: '趋势' },
-  { id: 'world', label: '世界' },
-  { id: 'search', label: '检索' }
+const TABS: { id: Tab; labelKey: I18nKey }[] = [
+  { id: 'dashboard', labelKey: 'nav.dashboard' },
+  { id: 'timeline', labelKey: 'nav.timeline' },
+  { id: 'graph', labelKey: 'nav.graph' },
+  { id: 'insights', labelKey: 'nav.insights' },
+  { id: 'trends', labelKey: 'nav.trends' },
+  { id: 'world', labelKey: 'nav.world' },
+  { id: 'search', labelKey: 'nav.search' }
 ];
 
-export default function App() {
+function Shell() {
+  const { t, lang, setLang } = useI18n();
   const [tab, setTab] = useState<Tab>('dashboard');
   return (
     <main className="app">
       <header className="app-header">
         <h1 className="app-title">Lumen — World Trends</h1>
-        <span className="app-sub">双语·事件图谱·趋势·AI 解读</span>
+        <span className="app-sub">{t('app.subtitle')}</span>
+        <button
+          className="btn lang-btn"
+          onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
+          title={lang === 'zh' ? 'Switch to English' : '切换中文'}
+        >
+          {lang === 'zh' ? 'EN' : '中文'}
+        </button>
       </header>
       <nav className="nav">
-        {TABS.map((t) => (
+        {TABS.map((tabDef) => (
           <button
-            key={t.id}
-            className={`nav-btn${tab === t.id ? ' active' : ''}`}
-            onClick={() => setTab(t.id)}
+            key={tabDef.id}
+            className={`nav-btn${tab === tabDef.id ? ' active' : ''}`}
+            onClick={() => setTab(tabDef.id)}
           >
-            {t.label}
+            {t(tabDef.labelKey)}
           </button>
         ))}
       </nav>
@@ -46,5 +56,13 @@ export default function App() {
       {tab === 'world' && <WorldTab />}
       {tab === 'search' && <SearchTab />}
     </main>
+  );
+}
+
+export default function App() {
+  return (
+    <I18nProvider>
+      <Shell />
+    </I18nProvider>
   );
 }

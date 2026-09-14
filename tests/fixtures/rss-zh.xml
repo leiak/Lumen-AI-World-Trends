@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>中文测试源</title>
+    <link>http://example.test</link>
+    <description>中文 fixture</description>
+    <item>
+      <title>中国与欧盟举行新一轮经贸磋商</title>
+      <link>http://example.test/zh/1</link>
+      <description>双方就关税与供应链议题交换意见。</description>
+      <pubDate>Wed, 01 Jan 2026 08:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>美国大选最新民调出炉</title>
+      <link>http://example.test/zh/2</link>
+      <description>两党候选人支持率接近。</description>
+      <pubDate>Tue, 31 Dec 2025 08:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

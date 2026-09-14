@@ -171,3 +171,10 @@ body {
 }
 .tag-causal { color: #f0a04b; border-color: #f0a04b55; }
 .tag-weekly { color: #58a6ff; border-color: #58a6ff55; }
+
+.lang-btn { margin-left: auto; padding: 4px 14px; font-size: 12px; }
+
+.chip.pick { cursor: pointer; }
+.chip.pick:hover { border-color: var(--accent); }
+.chip.pick.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+.chip.pick.on .n { color: #fff; }

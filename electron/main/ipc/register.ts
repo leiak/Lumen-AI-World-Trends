@@ -6,6 +6,7 @@ import type { SourceArticle } from '../../../shared/models.js';
 import type { TimelineEvent } from '../../../shared/timeline.js';
 import type { GraphView } from '../../../shared/graph-view.js';
 import type { DashboardSnapshot } from '../../../shared/dashboard.js';
+import type { CountryDetail, CountrySeriesResult } from '../../../shared/world.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
 
@@ -21,6 +22,8 @@ export interface IpcDeps {
   runSearch?: (payload: unknown) => Promise<IpcResponse<SourceArticle[]>>;
   runTimeline?: () => Promise<IpcResponse<TimelineEvent[]>>;
   runGraphQuery?: (payload: unknown) => Promise<IpcResponse<GraphView>>;
+  runCountryDetail?: (payload: unknown) => Promise<IpcResponse<CountryDetail | null>>;
+  runCountrySeries?: (payload: unknown) => Promise<IpcResponse<CountrySeriesResult>>;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -41,4 +44,6 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runTimeline) attach('timeline:replay', deps.runTimeline);
   if (deps.runSearch) ipcMain.handle('search:fulltext', (_e, payload) => deps.runSearch!(payload));
   if (deps.runGraphQuery) ipcMain.handle('graph:query', (_e, payload) => deps.runGraphQuery!(payload));
+  if (deps.runCountryDetail) ipcMain.handle('countries:detail', (_e, payload) => deps.runCountryDetail!(payload));
+  if (deps.runCountrySeries) ipcMain.handle('countries:series', (_e, payload) => deps.runCountrySeries!(payload));
 }

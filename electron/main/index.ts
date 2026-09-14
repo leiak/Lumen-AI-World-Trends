@@ -20,6 +20,7 @@ import { interpretCausal, interpretWeekly } from './ai/interpreter.js';
 import { createProvider } from './ai/provider.js';
 import { startScheduler, resolveIntervalMs } from './scheduler.js'
 import { loadDashboardSnapshot } from './dash/summary.js';
+import { countryDetail, countrySeries } from './world/detail.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -152,6 +153,22 @@ void app.whenReady().then(async () => {
       const includeEvents = Boolean(opts.includeEvents);
       const eventLimit = Number(opts.eventLimit) || 10;
       return { ok: true, data: queryGraph(getDb(), { topN, includeEvents, eventLimit }) };
+    },
+    runCountryDetail: async (payload) => {
+      const name =
+        typeof payload === 'object' && payload
+          ? String((payload as { name?: string }).name ?? '')
+          : '';
+      return { ok: true, data: name ? countryDetail(getDb(), name) : null };
+    },
+    runCountrySeries: async (payload) => {
+      const names =
+        typeof payload === 'object' && payload
+          ? Array.isArray((payload as { names?: unknown }).names)
+            ? ((payload as { names?: unknown }).names as string[])
+            : []
+          : [];
+      return { ok: true, data: countrySeries(getDb(), names) };
     }
   });
 

@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 import { useInvoke } from '../hooks/useInvoke';
+import { useI18n } from '../i18n/I18n';
 import type { TimelineEvent } from '../../shared/timeline';
 
 export default function TimelineTab() {
+  const { t } = useI18n();
   const { data, run } = useInvoke<TimelineEvent[]>('timeline:replay');
   useEffect(() => {
     void run();
@@ -11,19 +13,19 @@ export default function TimelineTab() {
   return (
     <section>
       <div className="card">
-        <h2>时间线回放</h2>
-        <p className="muted">事件按时间倒序；需先「构建图谱」产生事件。</p>
-        <button className="btn primary" onClick={() => void run()}>刷新</button>
+        <h2>{t('timeline.title')}</h2>
+        <p className="muted">{t('timeline.hint')}</p>
+        <button className="btn primary" onClick={() => void run()}>{t('common.refresh')}</button>
       </div>
 
       <div className="card">
         {(data?.length ?? 0) === 0 ? (
-          <p className="muted">暂无事件。请在「总览」点「构建图谱」生成后再回来。</p>
+          <p className="muted">{t('timeline.empty')}</p>
         ) : (
           <div className="timeline">
             {data!.map((ev) => (
               <div className="timeline-item" key={ev.id}>
-                <div className="timeline-time">{ev.occurredAt.slice(0, 16).replace('T', ' ')} · {ev.articleCount} 篇</div>
+                <div className="timeline-time">{ev.occurredAt.slice(0, 16).replace('T', ' ')} · {ev.articleCount} {t('timeline.articles')}</div>
                 <strong>{ev.title}</strong>
                 <ul className="article-list">
                   {ev.articles.slice(0, 5).map((a) => (

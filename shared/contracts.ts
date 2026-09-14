@@ -3,6 +3,8 @@ export const ALL_CHANNELS = [
   'dashboard:today',
   'topics:list',
   'graph:query',
+  'countries:detail',
+  'countries:series',
   'timeline:replay',
   'insights:generate',
   'insights:list',

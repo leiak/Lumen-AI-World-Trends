@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { useInvoke } from '../hooks/useInvoke';
+import { useI18n } from '../i18n/I18n';
 import type { SourceArticle } from '../../shared/models';
 
 export default function SearchTab() {
+  const { t } = useI18n();
   const [q, setQ] = useState('');
   const s = useInvoke<SourceArticle[]>('search:fulltext');
 
   return (
     <section>
       <div className="card">
-        <h2>本地全文检索</h2>
-        <p className="muted">检索本地缓存的已爬取文章（支持中英文关键词）。</p>
+        <h2>{t('search.title')}</h2>
+        <p className="muted">{t('search.hint')}</p>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             className="input"
@@ -19,16 +21,16 @@ export default function SearchTab() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') void s.run({ query: q });
             }}
-            placeholder="输入关键词，如 China / 关税"
+            placeholder={t('search.placeholder')}
           />
-          <button className="btn primary" onClick={() => void s.run({ query: q })}>搜索</button>
+          <button className="btn primary" onClick={() => void s.run({ query: q })}>{t('search.button')}</button>
         </div>
-        {s.error && <p className="err">错误: {s.error}</p>}
+        {s.error && <p className="err">{t('common.error')}: {s.error}</p>}
       </div>
 
       <div className="card">
         {(s.data?.length ?? 0) === 0 ? (
-          <p className="muted">暂无结果。先搜一搜，或到「总览」采集文章。</p>
+          <p className="muted">{t('search.empty')}</p>
         ) : (
           <ul className="article-list">
             {(s.data ?? []).map((a) => (

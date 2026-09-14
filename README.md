@@ -8,7 +8,7 @@
 
 ## ✨ 特性
 
-- **双语聚合**：中英双语源，先内置三路国际 RSS（BBC World / The Guardian World / NYT World），可自由扩展。
+- **双语聚合**：内置五路 RSS（BBC World / The Guardian World / NYT World / 36氪 / IT之家），中英双语；界面支持一键中/英切换。
 - **事件图谱**：实体抽取（词典 gazetteer）→ 共现关系 → 共享实体聚类成事件，落库为 entity / event / edge。
 - **趋势引擎**：按时间桶计算话题热度序列、动量（涨/跌）、世界热点（国家维度）。
 - **AI 因果解读**：对最热话题生成中文因果解读；provider 可插拔（火山方舟 ARK / Mock）。
@@ -18,6 +18,7 @@
 - **时间线回放**：把聚类出的事件按时间倒序组织成可回看的时间线，附其关联文章。
 - **事件图谱可视化**：以力导向图展示实体节点与共现边，可开/关事件节点（菱形）+ 事件→实体边，可拖拽、滚轮缩放。
 - **自动调度**：冷启动即自行跑一轮「采集→图谱→趋势」，此后每 30 分钟自动刷新（`LUMEN_INTERVAL_MINUTES` 可调）。
+- **双语界面**：中文/English 一键切换，选择本地记忆（`src/i18n/`，零新依赖）。
 - **本地缓存**：SQLite 落盘（`sql.js`），采集/建图/解读后与退出前自动持久化，离线可回看/检索。
 - **无服务端**：主进程 Node 完成采集/图谱/趋势/AI，渲染层仅展示；二者只走 Electron IPC，不监听任何端口。
 
@@ -82,7 +83,7 @@ npm test
   - `手动采集`：抓取当前配置的全部源（`collector:manualRun`）
   - `构建图谱`：对最新文章抽实体/聚类/建边（`graph:build`）
 - **趋势**：top 话题热度折线（`topics:list`）
-- **世界**：国家热点横向柱状（近似热力）
+- **世界**：国家热点榜单 + 点击查看国家详情（关联话题/文章）+ 2-4 国热度对比折线（`countries:detail` / `countries:series`）
 - **检索**：本地全文搜索已抓文章（`search:fulltext`）
 - **时间线**：事件按时间倒序回放，含关联文章（`timeline:replay`）
 - **图谱**：实体节点 + 共现边 + 可开关的事件节点（`graph:query`）
@@ -135,14 +136,16 @@ lumen/
     collectors/          # 采集适配器 (rss/html) + 源注册表
     extract/             # 实体词典 (gazetteer)
     graph/               # 聚类 / 关系 / 图谱仓储 / buildGraph
-    trends/              # 趋势引擎 / 热力
+    trends/              # 趋势引擎 / 热力 / 实体时序
+    world/               # 国家详情 / 多国对比（countries:*）
     ai/                  # provider(ARK/Mock) + 解读器
     dash/                # 总览汇总（dashboard:today）
     db/                  # sql.js 连接 / 迁移 / 持久化
     ipc/                 # IPC handlers
     index.ts             # 入口
   src/                   # 渲染层 (React)
-    components/          # 总览 / 时间线 / 图谱 / 趋势 / 世界 / 检索
+    components/          # 总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索
+    i18n/                # 中/英字典 + Provider(hook)
     hooks/               # useInvoke / useEngineStatus
   shared/                # 主/渲染共享类型与契约
   tests/                 # vitest 夹具测试
@@ -152,7 +155,7 @@ lumen/
 ## 测试
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
-- `npm test` 覆盖：契约、数据层、采集适配、图谱聚类/仓储、趋势引擎、总览汇总、AI provider/解读（含周报）、insight 仓储、检索。
+- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、检索。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -165,7 +168,7 @@ lumen/
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `search:fulltext` `graph:query` `timeline:replay`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
 
 ## 授权说明
 
