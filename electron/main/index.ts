@@ -29,20 +29,22 @@ function createWindow(): void {
   });
 
   if (process.env.LUMEN_SMOKE === '1') {
-    win.webContents.once('did-finish-load', async () => {
-      try {
-        const status = await win.webContents.executeJavaScript(
-          'window.lumen ? window.lumen.getEngineStatus() : Promise.resolve(null)'
-        );
-        const nav = await win.webContents.executeJavaScript(
-          'document.body ? document.body.innerText.slice(0, 200) : "?"'
-        );
-        console.log('LUMEN_SMOKE_OK', JSON.stringify(status), '| NAV', JSON.stringify(nav));
-      } catch (err) {
-        console.error('LUMEN_SMOKE_FAIL', String(err));
-      } finally {
-        app.quit();
-      }
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const status = await win.webContents.executeJavaScript(
+            'window.lumen ? window.lumen.getEngineStatus() : Promise.resolve(null)'
+          );
+          const nav = await win.webContents.executeJavaScript(
+            'document.body ? document.body.innerText.slice(0, 200) : "?"'
+          );
+          console.log('LUMEN_SMOKE_OK', JSON.stringify(status), '| NAV', JSON.stringify(nav));
+        } catch (err) {
+          console.error('LUMEN_SMOKE_FAIL', String(err));
+        } finally {
+          app.quit();
+        }
+      }, 1200);
     });
   }
 
@@ -97,4 +99,5 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
 
