@@ -8,9 +8,9 @@ export default function App() {
       {error && <p style={{ color: 'red' }}>错误：{error}</p>}
       {status && (
         <pre>
-          ready: {String(status.ready)}
-          {'\n'}dbPath: {status.dbPath}
-          {'\n'}sources: {status.sources.join(', ')}
+          ready: {String(status?.ready)}
+          {'\n'}dbPath: {status?.dbPath}
+          {'\n'}sources: {status?.sources?.join(', ') ?? ''}
         </pre>
       )}
     </main>

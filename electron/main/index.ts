@@ -43,6 +43,34 @@ function createWindow(): void {
       ? win.loadURL('http://localhost:5173')
       : win.loadFile(path.join(__dirname, '../dist/index.html'));
   void target;
+
+  if (process.env.LUMEN_DEBUG === '1') {
+    win.webContents.on('did-fail-load', (_e, code, desc) => {
+      console.error('[renderer] did-fail-load', code, desc);
+    });
+    win.webContents.on('console-message', (payload) => {
+      const e = payload as { message?: string };
+      console.log('[renderer]', e.message ?? '');
+    });
+    const dumpDom = async () => {
+      try {
+        const info = await win.webContents.executeJavaScript(
+          `JSON.stringify({
+             body: document.body ? document.body.innerText.slice(0, 200) : null,
+             hasLumen: typeof window.lumen,
+             hasRoot: !!document.getElementById('root')
+           })`
+        );
+        console.log('[renderer] DOM', info);
+      } catch (e) {
+        console.error('[renderer] eval fail', String(e));
+      }
+    };
+    win.webContents.on('did-finish-load', () => {
+      void dumpDom();
+      setTimeout(() => void dumpDom(), 2000);
+    });
+  }
 }
 
 void app.whenReady().then(async () => {
@@ -73,3 +101,6 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+
+
