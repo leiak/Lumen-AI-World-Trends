@@ -42,7 +42,7 @@ export function computeTrends(db: Database, opts: TrendOptions = {}): TrendsResu
   stmt.bind([startIso]);
   const rows: Row[] = [];
   while (stmt.step()) {
-    const r = stmt.getAsObject() as Row;
+    const r = stmt.getAsObject() as unknown as Row;
     rows.push(r);
   }
   stmt.free();
@@ -87,3 +87,4 @@ export function computeTrends(db: Database, opts: TrendOptions = {}): TrendsResu
 export function computeHeatmap(db: Database, opts: TrendOptions = {}): CountryHeat[] {
   return computeTrends(db, opts).countries;
 }
+

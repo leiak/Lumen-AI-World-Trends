@@ -9,6 +9,7 @@ import { runCrawl } from './db/persistence.js';
 import { createRssCollector } from './collectors/rss.js';
 import { REAL_SOURCES } from './collectors/registry.js';
 import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
+import { computeTrends } from './trends/engine.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,17 +50,12 @@ function createWindow(): void {
     win.webContents.on('did-fail-load', (_e, code, desc) => {
       console.error('[renderer] did-fail-load', code, desc);
     });
-    win.webContents.on('console-message', (payload) => {
-      const e = payload as { message?: string };
-      console.log('[renderer]', e.message ?? '');
-    });
     const dumpDom = async () => {
       try {
         const info = await win.webContents.executeJavaScript(
           `JSON.stringify({
-             body: document.body ? document.body.innerText.slice(0, 200) : null,
-             hasLumen: typeof window.lumen,
-             hasRoot: !!document.getElementById('root')
+             body: document.body ? document.body.innerText.slice(0, 300) : null,
+             hasLumen: typeof window.lumen
            })`
         );
         console.log('[renderer] DOM', info);
@@ -69,7 +65,7 @@ function createWindow(): void {
     };
     win.webContents.on('did-finish-load', () => {
       void dumpDom();
-      setTimeout(() => void dumpDom(), 2000);
+      setTimeout(() => void dumpDom(), 1500);
     });
   }
 }
@@ -94,7 +90,8 @@ void app.whenReady().then(async () => {
     runGraphBuild: async () => ({
       ok: true,
       data: await buildGraphFromDb(getDb(), defaultGazetteer())
-    })
+    }),
+    runTopics: async () => ({ ok: true, data: computeTrends(getDb()) })
   });
 
   createWindow();
