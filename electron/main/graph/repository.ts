@@ -110,3 +110,30 @@ export function loadArticles(db: Database, limit = 200): SourceArticle[] {
 }
 
 
+
+export function searchArticles(db: Database, query: string, limit = 50): SourceArticle[] {
+  const like = `%${query}%`;
+  const stmt = db.prepare(
+    `SELECT raw_hash, source, title, content, url, lang, published_at, crawled_at
+     FROM source_article WHERE title LIKE ? OR content LIKE ?
+     ORDER BY crawled_at DESC LIMIT ?`
+  );
+  stmt.bind([like, like, limit]);
+  const out: SourceArticle[] = [];
+  while (stmt.step()) {
+    const r = stmt.getAsObject() as Record<string, string | null>;
+    out.push({
+      id: r.raw_hash!,
+      source: r.source!,
+      title: r.title!,
+      content: r.content ?? undefined,
+      url: r.url!,
+      lang: (r.lang as 'zh' | 'en') ?? 'en',
+      publishedAt: r.published_at ?? null,
+      crawledAt: r.crawled_at!,
+      rawHash: r.raw_hash!
+    });
+  }
+  stmt.free();
+  return out;
+}

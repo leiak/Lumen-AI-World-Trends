@@ -8,17 +8,18 @@ import { setDb, getDb } from './state.js';
 import { runCrawl } from './db/persistence.js';
 import { createRssCollector } from './collectors/rss.js';
 import { REAL_SOURCES } from './collectors/registry.js';
-import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
+import { searchArticles } from './graph/repository.js';
 import { computeTrends } from './trends/engine.js';
 import { interpretCausal } from './ai/interpreter.js';
 import { createProvider } from './ai/provider.js';
+import { buildGraphFromDb as buildGraph, defaultGazetteer } from './graph/build.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: 1360,
+    height: 860,
     title: 'Lumen',
     webPreferences: {
       preload: path.join(__dirname, 'preload/index.cjs'),
@@ -33,7 +34,10 @@ function createWindow(): void {
         const status = await win.webContents.executeJavaScript(
           'window.lumen ? window.lumen.getEngineStatus() : Promise.resolve(null)'
         );
-        console.log('LUMEN_SMOKE_OK', JSON.stringify(status));
+        const nav = await win.webContents.executeJavaScript(
+          'document.body ? document.body.innerText.slice(0, 200) : "?"'
+        );
+        console.log('LUMEN_SMOKE_OK', JSON.stringify(status), '| NAV', JSON.stringify(nav));
       } catch (err) {
         console.error('LUMEN_SMOKE_FAIL', String(err));
       } finally {
@@ -47,29 +51,6 @@ function createWindow(): void {
       ? win.loadURL('http://localhost:5173')
       : win.loadFile(path.join(__dirname, '../dist/index.html'));
   void target;
-
-  if (process.env.LUMEN_DEBUG === '1') {
-    win.webContents.on('did-fail-load', (_e, code, desc) => {
-      console.error('[renderer] did-fail-load', code, desc);
-    });
-    const dumpDom = async () => {
-      try {
-        const info = await win.webContents.executeJavaScript(
-          `JSON.stringify({
-             body: document.body ? document.body.innerText.slice(0, 400) : null,
-             hasLumen: typeof window.lumen
-           })`
-        );
-        console.log('[renderer] DOM', info);
-      } catch (e) {
-        console.error('[renderer] eval fail', String(e));
-      }
-    };
-    win.webContents.on('did-finish-load', () => {
-      void dumpDom();
-      setTimeout(() => void dumpDom(), 1500);
-    });
-  }
 }
 
 void app.whenReady().then(async () => {
@@ -91,13 +72,20 @@ void app.whenReady().then(async () => {
     },
     runGraphBuild: async () => ({
       ok: true,
-      data: await buildGraphFromDb(getDb(), defaultGazetteer())
+      data: await buildGraph(getDb(), defaultGazetteer())
     }),
     runTopics: async () => ({ ok: true, data: computeTrends(getDb()) }),
     runInsight: async () => ({
       ok: true,
       data: await interpretCausal(createProvider(process.env), computeTrends(getDb()))
-    })
+    }),
+    runSearch: async (payload) => {
+      const q =
+        typeof payload === 'object' && payload
+          ? String((payload as { query?: string }).query ?? '')
+          : '';
+      return { ok: true, data: searchArticles(getDb(), q) };
+    }
   });
 
   createWindow();
@@ -109,3 +97,4 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
