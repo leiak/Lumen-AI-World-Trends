@@ -5,6 +5,8 @@ export const ALL_CHANNELS = [
   'graph:query',
   'timeline:replay',
   'insights:generate',
+  'insights:list',
+  'insights:weekly',
   'search:fulltext',
   'collector:manualRun',
   'graph:build'

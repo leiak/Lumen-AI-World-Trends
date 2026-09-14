@@ -12,11 +12,13 @@
 - **事件图谱**：实体抽取（词典 gazetteer）→ 共现关系 → 共享实体聚类成事件，落库为 entity / event / edge。
 - **趋势引擎**：按时间桶计算话题热度序列、动量（涨/跌）、世界热点（国家维度）。
 - **AI 因果解读**：对最热话题生成中文因果解读；provider 可插拔（火山方舟 ARK / Mock）。
-- **桌面看板**：6 个 Tab（总览 / 时间线 / 图谱 / 趋势 / 世界 / 检索）。
+- **桌面看板**：7 个 Tab（总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索）。
+- **总览数据**：文章/实体/事件/关系边/今日新增指标卡 + 今日热点 + 调度状态（`dashboard:today`）。
+- **AI 解读中心**：因果解读 + 周报生成，解读历史本地缓存（`insights:list` / `insights:weekly`）。
 - **时间线回放**：把聚类出的事件按时间倒序组织成可回看的时间线，附其关联文章。
-- **事件图谱可视化**：以力导向图展示实体节点与共现边，可拖拽、滚轮缩放。
+- **事件图谱可视化**：以力导向图展示实体节点与共现边，可开/关事件节点（菱形）+ 事件→实体边，可拖拽、滚轮缩放。
 - **自动调度**：冷启动即自行跑一轮「采集→图谱→趋势」，此后每 30 分钟自动刷新（`LUMEN_INTERVAL_MINUTES` 可调）。
-- **本地缓存**：SQLite 落盘（`better` 无原生模块，用 `sql.js`），离线可回看/检索。
+- **本地缓存**：SQLite 落盘（`sql.js`），采集/建图/解读后与退出前自动持久化，离线可回看/检索。
 - **无服务端**：主进程 Node 完成采集/图谱/趋势/AI，渲染层仅展示；二者只走 Electron IPC，不监听任何端口。
 
 ## 架构
@@ -74,17 +76,17 @@ npm test
 
 ## 看板使用（开箱）
 
-启动后顶部有 6 个 Tab（均读本地缓存，离线可用）：
+启动后顶部有 7 个 Tab（均读本地缓存，离线可用）：
 
-- **总览**：引擎状态 + 三个按钮
+- **总览**：指标卡（文章/实体/事件/边/今日新增）+ 今日热点 chips + 引擎与调度状态 + 操作按钮
   - `手动采集`：抓取当前配置的全部源（`collector:manualRun`）
   - `构建图谱`：对最新文章抽实体/聚类/建边（`graph:build`）
-  - `生成解读`：AI 对最热话题输出因果解读（`insights:generate`）
 - **趋势**：top 话题热度折线（`topics:list`）
 - **世界**：国家热点横向柱状（近似热力）
 - **检索**：本地全文搜索已抓文章（`search:fulltext`）
 - **时间线**：事件按时间倒序回放，含关联文章（`timeline:replay`）
-- **图谱**：实体节点 + 共现边的力导向图（`graph:query`）
+- **图谱**：实体节点 + 共现边 + 可开关的事件节点（`graph:query`）
+- **解读**：AI 因果解读 / 周报生成 + 历史记录（`insights:generate` / `insights:weekly` / `insights:list`）
 
 ## 启用真实 AI（火山方舟 ARK）
 
@@ -135,6 +137,7 @@ lumen/
     graph/               # 聚类 / 关系 / 图谱仓储 / buildGraph
     trends/              # 趋势引擎 / 热力
     ai/                  # provider(ARK/Mock) + 解读器
+    dash/                # 总览汇总（dashboard:today）
     db/                  # sql.js 连接 / 迁移 / 持久化
     ipc/                 # IPC handlers
     index.ts             # 入口
@@ -149,7 +152,7 @@ lumen/
 ## 测试
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
-- `npm test` 覆盖：契约、数据层、采集适配、图谱聚类/仓储、趋势引擎、AI provider/解读、检索。
+- `npm test` 覆盖：契约、数据层、采集适配、图谱聚类/仓储、趋势引擎、总览汇总、AI provider/解读（含周报）、insight 仓储、检索。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -162,7 +165,7 @@ lumen/
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `search:fulltext` `graph:query` `timeline:replay`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `search:fulltext` `graph:query` `timeline:replay`。
 
 ## 授权说明
 

@@ -2,16 +2,18 @@ import { useState } from 'react';
 import DashboardTab from './components/DashboardTab';
 import TimelineTab from './components/TimelineTab';
 import GraphTab from './components/GraphTab';
+import InsightsTab from './components/InsightsTab';
 import TrendsTab from './components/TrendsTab';
 import WorldTab from './components/WorldTab';
 import SearchTab from './components/SearchTab';
 
-type Tab = 'dashboard' | 'timeline' | 'graph' | 'trends' | 'world' | 'search';
+type Tab = 'dashboard' | 'timeline' | 'graph' | 'insights' | 'trends' | 'world' | 'search';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: '总览' },
   { id: 'timeline', label: '时间线' },
   { id: 'graph', label: '图谱' },
+  { id: 'insights', label: '解读' },
   { id: 'trends', label: '趋势' },
   { id: 'world', label: '世界' },
   { id: 'search', label: '检索' }
@@ -39,6 +41,7 @@ export default function App() {
       {tab === 'dashboard' && <DashboardTab />}
       {tab === 'timeline' && <TimelineTab />}
       {tab === 'graph' && <GraphTab />}
+      {tab === 'insights' && <InsightsTab />}
       {tab === 'trends' && <TrendsTab />}
       {tab === 'world' && <WorldTab />}
       {tab === 'search' && <SearchTab />}

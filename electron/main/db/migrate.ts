@@ -72,14 +72,27 @@ CREATE TABLE IF NOT EXISTS article_entity (
 CREATE INDEX IF NOT EXISTS idx_article_entity_crawled ON article_entity(crawled_at);
 `;
 
+const MIGRATION_5 = `
+CREATE TABLE IF NOT EXISTS insight (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  model TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_insight_generated ON insight(generated_at);
+`;
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
   db.exec(MIGRATION_3);
   db.exec(MIGRATION_4);
+  db.exec(MIGRATION_5);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '4');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '5');`
   );
 }
 

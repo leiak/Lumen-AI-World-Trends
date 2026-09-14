@@ -2,7 +2,7 @@ import type { Database } from 'sql.js';
 import type { NamedEntity } from '../../../shared/entities.js';
 import type { SourceArticle } from '../../../shared/models.js';
 import type { TimelineArticle, TimelineEvent } from '../../../shared/timeline.js';
-import type { GraphNode, GraphLink, GraphView } from '../../../shared/graph-view.js';
+import type { GraphNode, GraphLink, GraphView, GraphQueryOptions } from '../../../shared/graph-view.js';
 import type { GraphEdge } from './relation.js';
 import type { EventBundle } from './cluster.js';
 
@@ -162,7 +162,15 @@ export function listEvents(db: Database, limit = 100): TimelineEvent[] {
   return out;
 }
 
-export function queryGraph(db: Database, topN = 20): GraphView {
+export function queryGraph(
+  db: Database,
+  opts: GraphQueryOptions | number = {}
+): GraphView {
+  const options: GraphQueryOptions = typeof opts === 'number' ? { topN: opts } : opts;
+  const topN = options.topN ?? 20;
+  const includeEvents = options.includeEvents ?? false;
+  const eventLimit = options.eventLimit ?? 10;
+
   // 节点：实体按出现频次
   const nodeStmt = db.prepare(
     `SELECT e.id, e.name, e.type, COUNT(ae.article_id) AS cnt
@@ -173,15 +181,47 @@ export function queryGraph(db: Database, topN = 20): GraphView {
   const nodes: GraphNode[] = [];
   while (nodeStmt.step()) {
     const r = nodeStmt.getAsObject() as unknown as { id: string; name: string; type: string; cnt: number };
-    nodes.push({ id: r.id, name: r.name, type: r.type, count: r.cnt });
+    nodes.push({ id: r.id, name: r.name, type: r.type, count: r.cnt, kind: 'entity' });
   }
   nodeStmt.free();
 
+  // 事件节点（可选项）
+  const eventById = new Map<string, string>();
+  if (includeEvents) {
+    const evtStmt = db.prepare(
+      `SELECT e.id, e.title, e.occurred_at,
+              (SELECT COUNT(*) FROM article_event ae WHERE ae.event_id = e.id) AS cnt
+       FROM event e ORDER BY cnt DESC LIMIT ?`
+    );
+    evtStmt.bind([eventLimit]);
+    while (evtStmt.step()) {
+      const r = evtStmt.getAsObject() as unknown as {
+        id: string;
+        title: string;
+        occurred_at: string | null;
+        cnt: number;
+      };
+      const nodeId = `evt:${r.id}`;
+      eventById.set(r.id, nodeId);
+      nodes.push({
+        id: nodeId,
+        name: r.title,
+        type: 'event',
+        count: r.cnt,
+        kind: 'event',
+        occurredAt: r.occurred_at ?? undefined
+      });
+    }
+    evtStmt.free();
+  }
+
   const ids = new Set(nodes.map((n) => n.id));
+  const links: GraphLink[] = [];
+
+  // 实体共现边
   const edgeStmt = db.prepare(
     `SELECT source, target, weight FROM graph_edge ORDER BY weight DESC LIMIT 300`
   );
-  const links: GraphLink[] = [];
   while (edgeStmt.step()) {
     const r = edgeStmt.getAsObject() as unknown as { source: string; target: string; weight: number };
     const s = r.source.toLowerCase();
@@ -191,6 +231,28 @@ export function queryGraph(db: Database, topN = 20): GraphView {
     }
   }
   edgeStmt.free();
+
+  // 事件→实体边：事件与其关联文章命中的实体共享连接
+  if (includeEvents) {
+    const evtEdgeStmt = db.prepare(
+      `SELECT ae2.event_id AS event_id, ae1.entity_id AS entity_id, COUNT(*) AS weight
+       FROM article_event ae2 JOIN article_entity ae1 ON ae1.article_id = ae2.article_id
+       GROUP BY ae2.event_id, ae1.entity_id`
+    );
+    while (evtEdgeStmt.step()) {
+      const r = evtEdgeStmt.getAsObject() as unknown as {
+        event_id: string;
+        entity_id: string;
+        weight: number;
+      };
+      const src = eventById.get(r.event_id);
+      if (src && ids.has(r.entity_id)) {
+        links.push({ source: src, target: r.entity_id, weight: r.weight });
+      }
+    }
+    evtEdgeStmt.free();
+  }
+
   return { nodes, links };
 }
 
