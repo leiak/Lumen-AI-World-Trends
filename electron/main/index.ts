@@ -23,6 +23,7 @@ import { startScheduler, resolveIntervalMs } from './scheduler.js'
 import { loadDashboardSnapshot } from './dash/summary.js';
 import { countryDetail, countrySeries } from './world/detail.js';
 import { buildCausalChain } from './causal/build.js';
+import { buildGlobalNarratives } from './causal/merge.js';
 import { interpretCausalChain } from './causal/interpret.js';
 import { saveCausalChain, listCausalChains, getCausalChain } from './causal/repository.js';
 import { buildMarkdownSnapshot, buildJsonSnapshot, type ExportSnapshotInput } from './export/snapshot.js';
@@ -209,6 +210,16 @@ void app.whenReady().then(async () => {
           : '';
       return { ok: true, data: id ? getCausalChain(getDb(), id) : null };
     },
+    runCausalityNarratives: async (payload) => {
+      const p = (payload ?? {}) as { maxEntities?: number; maxEvents?: number };
+      return {
+        ok: true,
+        data: buildGlobalNarratives(getDb(), {
+          maxEntities: Number(p.maxEntities) || 12,
+          maxEvents: Number(p.maxEvents) || 5
+        })
+      };
+    },
     runExportSnapshot: async (payload) => {
       const p = (payload ?? {}) as { format?: 'md' | 'json'; path?: string };
       const format = p.format === 'json' ? 'json' : 'md';
@@ -219,6 +230,7 @@ void app.whenReady().then(async () => {
         generatedAt: new Date().toISOString(),
         insights: listInsights(db),
         chains: listCausalChains(db),
+        narratives: buildGlobalNarratives(db),
         trends: computeTrends(db)
       };
       const content = format === 'json' ? buildJsonSnapshot(input) : buildMarkdownSnapshot(input);
@@ -269,6 +281,7 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
 
 
 

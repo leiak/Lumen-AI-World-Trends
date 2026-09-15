@@ -6,19 +6,26 @@ import type { CausalChain } from '../../shared/causal';
 
 function ChainView({ chain }: { chain: CausalChain }) {
   const { t } = useI18n();
+  const kindLabel = (kind: string) =>
+    kind === 'ai' ? t('insights.causal.kind.ai') : t('insights.causal.kind.rule');
+  const kindTag = (kind: string) => (kind === 'ai' ? 'tag-ai' : 'tag-rule');
   return (
     <div>
       <div className="muted" style={{ marginBottom: 12 }}>
-        {chain.rootEntity} · {t('insights.causal.nodes', { a: chain.nodes.length })} ·{' '}
+        {chain.rootEntity}
+        {chain.entities && chain.entities.length > 1
+          ? ` +${chain.entities.length - 1} · ${t('insights.nar.entities', { a: chain.entities.length })}`
+          : ''}{' '}
+        · {t('insights.causal.nodes', { a: chain.nodes.length })} ·{' '}
         {t('insights.causal.links', { a: chain.links.length })} · {t('insights.model')} {chain.model}
       </div>
       <ol className="chain-list">
-        {chain.nodes.map((node, i) => {
-          const link = chain.links[i];
+        {chain.nodes.map((node, idx) => {
+          const outgoing = chain.links.filter((l) => l.fromEventId === node.eventId);
           return (
             <li key={node.eventId}>
               <div className="chain-node">
-                <span className="chain-order">{i + 1}</span>
+                <span className="chain-order">{(chain.nodes.indexOf(node) + 1).toString()}</span>
                 <div className="chain-node-body">
                   <div className="chain-title">{node.title}</div>
                   <div className="muted">
@@ -26,18 +33,16 @@ function ChainView({ chain }: { chain: CausalChain }) {
                   </div>
                 </div>
               </div>
-              {link && (
-                <div className="chain-edge">
+              {outgoing.map((link, li) => (
+                <div key={li} className="chain-edge">
                   <div className="chain-line">↓</div>
                   <div className="chain-assert">
-                    <span className="chip">{t('insights.causal.anchor', { a: link.anchor })}</span>
-                    <span className={`tag ${link.kind === 'ai' ? 'tag-ai' : 'tag-rule'}`}>
-                      {link.kind === 'ai' ? t('insights.causal.kind.ai') : t('insights.causal.kind.rule')}
-                    </span>
+                    {link.anchor && <span className="chip">{t('insights.causal.anchor', { a: link.anchor })}</span>}
+                    <span className={`tag ${kindTag(link.kind)}`}>{kindLabel(link.kind)}</span>
                     {link.assertion && <div className="mono chain-assert-text">{link.assertion}</div>}
                   </div>
                 </div>
-              )}
+              ))}
             </li>
           );
         })}
@@ -62,9 +67,11 @@ export default function InsightsTab() {
 
   const causalList = useInvoke<CausalChain[]>('causality:list');
   const causalGen = useInvoke<CausalChain>('causality:generate');
+  const narratives = useInvoke<CausalChain[]>('causality:narratives');
   const [entity, setEntity] = useState('');
   const [useAi, setUseAi] = useState(true);
   const [selectedChain, setSelectedChain] = useState<CausalChain | null>(null);
+  const [selectedNarrative, setSelectedNarrative] = useState<CausalChain | null>(null);
 
   const exportSnap = useInvoke<{ saved: boolean; path?: string }>('export:snapshot');
   const crawl = useInvoke<{ fetched?: number; addedNew?: number }>('collector:manualRun');
@@ -74,7 +81,16 @@ export default function InsightsTab() {
   useEffect(() => {
     void list.run({ limit: 50 });
     void causalList.run({ limit: 20 });
+    void loadNarratives();
   }, []);
+
+  async function loadNarratives() {
+    const res = await narratives.run();
+    if (res?.ok && res.data && res.data.length > 0) {
+      const first = res.data[0];
+      if (first) setSelectedNarrative(first);
+    }
+  }
 
   async function handleGen(kind: 'causal' | 'weekly') {
     const run = kind === 'causal' ? gen : weekly;
@@ -204,6 +220,47 @@ export default function InsightsTab() {
         </div>
 
         <div className="insights-col">
+          <div className="card">
+            <div className="card-head">
+              <h2>{t('insights.nar.title')}</h2>
+              <button className="btn" onClick={() => void loadNarratives()} disabled={narratives.loading}>
+                {narratives.loading ? t('common.loading') : t('insights.nar.refresh')}
+              </button>
+            </div>
+            <p className="muted">{t('insights.nar.hint')}</p>
+            {narratives.error && <p className="err">{t('insights.failed')}: {narratives.error}</p>}
+            {(narratives.data?.length ?? 0) === 0 ? (
+              <p className="muted">{narratives.loading ? t('insights.loadingHistory') : t('insights.nar.empty')}</p>
+            ) : (
+              <>
+                <ul className="insight-list">
+                  {(narratives.data ?? []).map((n) => (
+                    <li
+                      key={n.id}
+                      className={`insight-item${selectedNarrative?.id === n.id ? ' selected' : ''}`}
+                      onClick={() => setSelectedNarrative(n)}
+                    >
+                      <span className="tag tag-narrative">{t('insights.nar.title')}</span>
+                      <span className="insight-title">
+                        {n.rootEntity}
+                        {n.entities && n.entities.length > 1 ? ` +${n.entities.length - 1}` : ''}
+                      </span>
+                      <span className="muted">
+                        {t('insights.causal.nodes', { a: n.nodes.length })} ·{' '}
+                        {t('insights.causal.links', { a: n.links.length })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {selectedNarrative && (
+                  <div style={{ marginTop: 12 }}>
+                    <ChainView chain={selectedNarrative} />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="card">
             <h2>{t('insights.causal.title')}</h2>
             <p className="muted">{t('insights.causal.hint')}</p>

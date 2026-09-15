@@ -217,3 +217,7 @@ body {
 }
 .guide-steps { margin: 8px 0 12px; padding-left: 22px; }
 .guide-steps li { margin-bottom: 4px; font-size: 14px; }
+
+/* 叙事 / 选中态 */
+.tag-narrative { color: #a371f7; border-color: #a371f755; }
+.insight-item.selected { border-color: var(--accent); background: var(--bg-hover); }

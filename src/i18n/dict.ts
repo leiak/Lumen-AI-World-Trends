@@ -91,6 +91,11 @@ const zhDict = {
   'insights.causal.summary': '因果摘要',
   'insights.causal.history': '历史因果链（本地缓存）',
   'insights.causal.historyEmpty': '暂无因果链。生成一条试试。',
+  'insights.nar.title': '全局叙事',
+  'insights.nar.hint': '合并跨实体的因果链，把零散事件织成更大的世界叙事。',
+  'insights.nar.refresh': '刷新',
+  'insights.nar.empty': '暂无叙事。先生成因果链，或采集更多数据。',
+  'insights.nar.entities': '{a} 个实体参与',
   'insights.guide.title': '三步上手',
   'insights.guide.step1': '1. 手动采集全球新闻源',
   'insights.guide.step2': '2. 构建事件图谱',
@@ -199,6 +204,11 @@ const enDict: Record<I18nKey, string> = {
   'insights.causal.summary': 'Causal summary',
   'insights.causal.history': 'History (cached locally)',
   'insights.causal.historyEmpty': 'No causal chains yet. Generate one.',
+  'insights.nar.title': 'Global narratives',
+  'insights.nar.hint': 'Merge cross-entity causal chains into larger world narratives.',
+  'insights.nar.refresh': 'Refresh',
+  'insights.nar.empty': 'No narratives yet. Generate chains or crawl more data first.',
+  'insights.nar.entities': '{a} entities involved',
   'insights.guide.title': 'Get started in 3 steps',
   'insights.guide.step1': '1. Crawl global news sources',
   'insights.guide.step2': '2. Build the event graph',
@@ -222,6 +232,7 @@ export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
 }
 export const ZH_DICT = zhDict;
 export const EN_DICT = enDict;
+
 
 
 

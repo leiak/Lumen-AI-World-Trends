@@ -13,6 +13,7 @@
 - **趋势引擎**：按时间桶计算话题热度序列、动量（涨/跌）、世界热点（国家维度）。
 - **AI 因果解读**：对最热话题生成中文因果解读；provider 可插拔（火山方舟 ARK / Mock）。
 - **因果链**：输入任意实体，把其相关事件按时间串成链路（共享实体作锚点），可选 AI 逐段补因果断言 + 整体摘要。
+- **全局叙事**：把跨实体的因果链按共享事件自动合并成更大的叙事（如“制裁 China → 油价 Oil → 通胀 US”），从局部链到世界叙事一张图。
 - **解读中心体验**：AI 解读 / 因果链双栏布局；新手三步引导（采集→建图→生成）；一键导出 Markdown/JSON 快照。
 - **桌面看板**：7 个 Tab（总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索）。
 - **总览数据**：文章/实体/事件/关系边/今日新增指标卡 + 今日热点 + 调度状态（`dashboard:today`）。
@@ -33,13 +34,13 @@
    ├─ 采集 collector (rss / html 适配器)
    ├─ 图谱 graph (entity/event/edge + 聚类)
    ├─ 趋势 trends (时间序列 / 动量 / 热力)
-   ├─ 因果 causal (规则链构建 + AI 断言)
+   ├─ 因果 causal (规则链构建 + 跨链合并 + AI 断言)
    ├─ 导出 export (快照 Markdown/JSON)
    └─ AI ai (ARK / Mock 可插拔 provider)
 数据层: SQLite (sql.js)  →  %APPDATA%\lumen-world-trends\lumen.db
 ```
 
-单向流水线：`采集 → 标准化去重 → 图谱入库 → 趋势 → 因果链/AI 解读 → IPC → 展示`
+单向流水线：`采集 → 标准化去重 → 图谱入库 → 趋势 → 因果链/全局叙事 + AI 解读 → IPC → 展示`
 
 ## 技术栈
 
@@ -93,9 +94,10 @@ npm test
 - **时间线**：事件按时间倒序回放，含关联文章（`timeline:replay`）
 - **图谱**：实体节点 + 共现边 + 可开关的事件节点（`graph:query`）
 - **解读**：AI 因果解读 / 周报生成 + 历史记录（`insights:generate` / `insights:weekly` / `insights:list`）
+  - **全局叙事**：自动合并跨实体链，点击查看整条叙事（`causality:narratives`）
   - **因果链**：输入实体名（如 China / 关税）生成事件链，可开/关 AI 断言，历史可回看（`causality:generate` / `causality:list` / `causality:chain`）
   - **三步引导**：无数据时顶部出现新手指引，可直接「去采集 / 去建图」
-  - **导出快照**：一键导出 Markdown/JSON 快照（趋势 + 解读 + 因果链，系统保存对话框）（`export:snapshot`）
+  - **导出快照**：一键导出 Markdown/JSON 快照（趋势 + 解读 + 因果链 + 全局叙事，系统保存对话框）（`export:snapshot`）
 
 ## 启用真实 AI（火山方舟 ARK）
 
@@ -145,7 +147,7 @@ lumen/
     extract/             # 实体词典 (gazetteer)
     graph/               # 聚类 / 关系 / 图谱仓储 / buildGraph
     trends/              # 趋势引擎 / 热力 / 实体时序
-    causal/              # 因果链构建 (规则) + AI 断言解析 + 仓储
+    causal/              # 因果链构建 (规则) + 跨链合并 (merge) + AI 断言 + 仓储
     export/              # 快照导出 (Markdown/JSON)
     world/               # 国家详情 / 多国对比（countries:*）
     ai/                  # provider(ARK/Mock) + 解读器
@@ -167,7 +169,7 @@ lumen/
 ## 测试
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
-- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、快照导出（Markdown/JSON）、检索。
+- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、跨链合并/全局叙事、快照导出（Markdown/JSON）、检索。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -176,13 +178,13 @@ lumen/
 - **世界热力地图**：已实现 choropleth（110m 粒度）；大洲/更细行政区可换用 50m GeoJSON 重生成（`scripts/gen-world-geo.mjs`）。
 - **实体识别**：当前为词典 + 句法匹配；可升级为本地 NLP 或交给 AI 做更细抽取与上下位关系。
 - **图谱**：关系类型 v1 仅 `co-occurrence`；真正的因果/包含关系交给 AI 解读阶段。
-- **因果链**：v1 基于共享实体的时间相邻锚点，AI 断言可选；可进一步做跨链合并/反事实推演。
+- **因果链**：v1 基于共享实体的时间相邻锚点，AI 断言可选；v2 已支持跨实体合并成全局叙事；可再进一步做反事实推演/时序因果。
 - **导出快照**：v1 为 Markdown/JSON 全文导出；可扩展为图表 PNG、订阅式自动归档。
 - **AI**：解读聚焦最热话题（≤400 字）；可按需扩展周报/月报样式与模型切换。
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `export:snapshot` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `export:snapshot` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
 
 ## 授权说明
 

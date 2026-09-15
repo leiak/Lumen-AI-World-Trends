@@ -21,6 +21,7 @@ const chain: CausalChain = {
     { eventId: 'ev1', title: 'China sanctions', occurredAt: '2026-01-01T00:00:00Z', articleCount: 3 },
     { eventId: 'ev2', title: 'Oil price jumps', occurredAt: '2026-01-03T00:00:00Z', articleCount: 2 }
   ],
+  entities: ['China', 'Oil'],
   links: [{ fromEventId: 'ev1', toEventId: 'ev2', anchor: 'Oil', kind: 'ai', assertion: '因为制裁升级，所以油价上行。' }],
   summary: '制裁推高油价。'
 };
@@ -29,6 +30,7 @@ const input = {
   generatedAt: '2026-01-09T12:00:00Z',
   insights: [insight],
   chains: [chain],
+  narratives: [chain],
   trends
 };
 
@@ -43,6 +45,9 @@ describe('export snapshot', () => {
     expect(md).toContain('2. Oil price jumps');
     expect(md).toContain('锚点 Anchor: Oil [AI]：因为制裁升级，所以油价上行。');
     expect(md).toContain('摘要 Summary: 制裁推高油价。');
+    expect(md).toContain('## 全局叙事 / Narratives');
+    expect(md).toContain('### China（2 实体） · mock ·');
+    expect(md).toContain('- 全局叙事: 1');
     expect(md).toContain('# AI 解读');
   });
 

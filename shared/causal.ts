@@ -17,6 +17,7 @@ export interface CausalLink {
 export interface CausalChain {
   id: string;
   rootEntity: string;
+  entities?: string[];
   generatedAt: string;
   model: string;
   nodes: CausalNode[];

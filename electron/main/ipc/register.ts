@@ -28,6 +28,7 @@ export interface IpcDeps {
   runCausalityList?: (payload: unknown) => Promise<IpcResponse<CausalChain[]>>;
   runCausalityGenerate?: (payload: unknown) => Promise<IpcResponse<CausalChain>>;
   runCausalityChain?: (payload: unknown) => Promise<IpcResponse<CausalChain | null>>;
+  runCausalityNarratives?: (payload: unknown) => Promise<IpcResponse<CausalChain[]>>;
   runCountrySeries?: (payload: unknown) => Promise<IpcResponse<CountrySeriesResult>>;
   runExportSnapshot?: (payload: unknown) => Promise<IpcResponse<ExportResult>>;
 }
@@ -54,6 +55,8 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runCausalityList) ipcMain.handle('causality:list', (_e, payload) => deps.runCausalityList!(payload));
   if (deps.runCausalityGenerate) ipcMain.handle('causality:generate', (_e, payload) => deps.runCausalityGenerate!(payload));
   if (deps.runCausalityChain) ipcMain.handle('causality:chain', (_e, payload) => deps.runCausalityChain!(payload));
+  if (deps.runCausalityNarratives) ipcMain.handle('causality:narratives', (_e, payload) => deps.runCausalityNarratives!(payload));
   if (deps.runCountrySeries) ipcMain.handle('countries:series', (_e, payload) => deps.runCountrySeries!(payload));
   if (deps.runExportSnapshot) ipcMain.handle('export:snapshot', (_e, payload) => deps.runExportSnapshot!(payload));
 }
+
