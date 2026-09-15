@@ -12,6 +12,8 @@ const zhDict = {
   'common.refresh': '刷新',
   'common.error': '错误',
   'common.loading': '加载中…',
+  'common.on': '开',
+  'common.off': '关',
   'dash.title': '总览',
   'dash.metric.articles': '文章',
   'dash.metric.entities': '实体',
@@ -33,6 +35,14 @@ const zhDict = {
   'dash.crawlOk': '采集完成 · 抓取 {a} / 新增 {b}',
   'dash.buildOk': '图谱完成 · 文章 {a} / 实体 {b} / 事件 {c} / 边 {d}',
   'dash.insightHint': 'AI 解读请到「解读」Tab 生成。',
+  'dash.settings.title': '采集策略',
+  'dash.settings.hint': '配置自动采集频率与启用的新闻源，保存后即时生效。',
+  'dash.settings.auto': '自动调度',
+  'dash.settings.interval': '间隔（分钟，1-720）',
+  'dash.settings.sources': '启用的新闻源',
+  'dash.settings.save': '保存策略',
+  'dash.settings.saved': '策略已保存并生效',
+  'dash.settings.minOne': '至少保留一个源',
   'timeline.title': '时间线回放',
   'timeline.hint': '事件按时间倒序；需先「构建图谱」产生事件。',
   'timeline.empty': '暂无事件。请在「总览」点「构建图谱」生成后再回来。',
@@ -130,6 +140,8 @@ const enDict: Record<I18nKey, string> = {
   'common.refresh': 'Refresh',
   'common.error': 'Error',
   'common.loading': 'Loading…',
+  'common.on': 'On',
+  'common.off': 'Off',
   'dash.title': 'Overview',
   'dash.metric.articles': 'Articles',
   'dash.metric.entities': 'Entities',
@@ -151,6 +163,14 @@ const enDict: Record<I18nKey, string> = {
   'dash.crawlOk': 'Crawl done · fetched {a} / new {b}',
   'dash.buildOk': 'Graph built · articles {a} / entities {b} / events {c} / edges {d}',
   'dash.insightHint': 'Generate AI insights in the Insights tab.',
+  'dash.settings.title': 'Collect policies',
+  'dash.settings.hint': 'Set auto-poll frequency and enabled sources; takes effect immediately.',
+  'dash.settings.auto': 'Auto polling',
+  'dash.settings.interval': 'Interval (minutes, 1-720)',
+  'dash.settings.sources': 'Enabled sources',
+  'dash.settings.save': 'Save policy',
+  'dash.settings.saved': 'Policy saved & applied',
+  'dash.settings.minOne': 'Keep at least one source enabled',
   'timeline.title': 'Timeline replay',
   'timeline.hint': 'Events in reverse time order; build the graph first to create events.',
   'timeline.empty': 'No events yet. Build the graph in Overview first.',
@@ -242,6 +262,8 @@ export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
 }
 export const ZH_DICT = zhDict;
 export const EN_DICT = enDict;
+
+
 
 
 

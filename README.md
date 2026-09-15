@@ -25,6 +25,7 @@
 - **世界热力地图**：世界 GeoJSON choropleth（110m），国家热度着色、可缩放拖动，点击区域联动国家详情/对比。
 - **本地缓存**：SQLite 落盘（`sql.js`），采集/建图/解读后与退出前自动持久化，离线可回看/检索。
 - **无服务端**：主进程 Node 完成采集/图谱/趋势/AI，渲染层仅展示；二者只走 Electron IPC，不监听任何端口。
+- **采集策略（UI 可配）**：总览 Tab 可勾选启用的新闻源、开关自动调度、调间隔（1-720 分钟），保存后即时生效并落库持久化（`settings:get` / `settings:update`）。
 
 ## 架构
 
@@ -86,7 +87,8 @@ npm test
 启动后顶部有 7 个 Tab（均读本地缓存，离线可用）：
 
 - **总览**：指标卡（文章/实体/事件/边/今日新增）+ 今日热点 chips + 引擎与调度状态 + 操作按钮
-  - `手动采集`：抓取当前配置的全部源（`collector:manualRun`）
+  - **采集策略**：启用的新闻源勾选开关 + 自动调度开/关 + 间隔分钟，保存即生效（`settings:get` / `settings:update`）
+  - `手动采集`：抓取当前启用的源（`collector:manualRun`）
   - `构建图谱`：对最新文章抽实体/聚类/建边（`graph:build`）
 - **趋势**：top 话题热度折线（`topics:list`）
 - **世界**：国家热点榜单 + 点击查看国家详情（关联话题/文章）+ 2-4 国热度对比折线（`countries:detail` / `countries:series`）
@@ -135,7 +137,7 @@ npm run dev
 开发辅助环境变量（非必须）：
 
 - `LUMEN_SMOKE=1`：自动加载后打印引擎状态并退出（冒烟自检）
-- `LUMEN_INTERVAL_MINUTES`：自动调度间隔（分钟，默认 30）
+- `LUMEN_INTERVAL_MINUTES`：自动调度间隔兜底值（分钟，默认 30；已在 UI「采集策略」配置后以 UI 为准）
 - `LUMEN_DEBUG=1`：打印渲染层 DOM/console 便于排查白屏
 
 ## 项目结构
@@ -169,7 +171,7 @@ lumen/
 ## 测试
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
-- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、跨链合并/全局叙事、叙事 AI 摘要/反事实推演、快照导出（Markdown/JSON）、检索。
+- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、跨链合并/全局叙事、叙事 AI 摘要/反事实推演、采集策略设置（持久化/过滤/钳制）、快照导出（Markdown/JSON）、检索。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -184,7 +186,7 @@ lumen/
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
 
 ## 授权说明
 

@@ -26,6 +26,7 @@ import { buildCausalChain } from './causal/build.js';
 import { buildGlobalNarratives } from './causal/merge.js';
 import { interpretCausalChain, summarizeNarrative, reasonCounterfactual } from './causal/interpret.js';
 import { saveCausalChain, listCausalChains, getCausalChain } from './causal/repository.js';
+import { loadCollectSettings, saveCollectSettings, enabledCollectors } from './db/settings.js';
 import { buildMarkdownSnapshot, buildJsonSnapshot, type ExportSnapshotInput } from './export/snapshot.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -95,7 +96,7 @@ void app.whenReady().then(async () => {
   const provider = createProvider(process.env);
 
   registerIpc({
-    getStatus: () => getEngineStatus(ready, dbPath, REAL_SOURCES.map((s) => s.id)),
+    getStatus: () => getEngineStatus(ready, dbPath, enabledCollectors(getDb(), REAL_SOURCES).map((s) => s.id)),
     runDashboard: async () => ({
       ok: true,
       data: loadDashboardSnapshot(getDb(), {
@@ -104,7 +105,7 @@ void app.whenReady().then(async () => {
       })
     }),
     runManualCrawl: async () => {
-      const collectors = REAL_SOURCES.map((cfg) => createRssCollector(cfg));
+      const collectors = enabledCollectors(getDb(), REAL_SOURCES).map((cfg) => createRssCollector(cfg));
       const summary = await runCrawl(getDb(), collectors);
       persist();
       return { ok: true, data: summary };
@@ -242,6 +243,32 @@ void app.whenReady().then(async () => {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
     },
+    runSettingsGet: async () => ({
+      ok: true,
+      data: {
+        settings: loadCollectSettings(getDb()),
+        allSources: REAL_SOURCES.map(({ id, name, lang, kind }) => ({ id, name, lang, kind }))
+      }
+    }),
+    runSettingsUpdate: async (payload) => {
+      const p = (payload ?? {}) as { enabledSources?: string[]; autoEnabled?: boolean; intervalMinutes?: number };
+      const known = new Set(REAL_SOURCES.map((s) => s.id));
+      if (p.enabledSources !== undefined) {
+        const filtered = p.enabledSources.filter((id) => known.has(id));
+        if (filtered.length === 0) return { ok: false, error: 'at least one source required' };
+        p.enabledSources = filtered;
+      }
+      saveCollectSettings(getDb(), p, known);
+      persist();
+      restartScheduler();
+      return {
+        ok: true,
+        data: {
+          settings: loadCollectSettings(getDb()),
+          allSources: REAL_SOURCES.map(({ id, name, lang, kind }) => ({ id, name, lang, kind }))
+        }
+      };
+    },
     runExportSnapshot: async (payload) => {
       const p = (payload ?? {}) as { format?: 'md' | 'json'; path?: string };
       const format = p.format === 'json' ? 'json' : 'md';
@@ -279,19 +306,31 @@ void app.whenReady().then(async () => {
     }
   });
 
-  startScheduler({
+  let stopSchedule: (() => void) | null = null;
+
+  const restartScheduler = (): void => {
+    if (stopSchedule) {
+      stopSchedule();
+      stopSchedule = null;
+    }
+    const st = loadCollectSettings(getDb(), { intervalMinutes: Math.round(resolveIntervalMs(process.env) / 60000) });
+    if (!st.autoEnabled) return;
+    stopSchedule = startScheduler({
     job: async () => {
       lastAutoRunAt = new Date().toISOString();
       const db = getDb();
-      const collectors = REAL_SOURCES.map((cfg) => createRssCollector(cfg));
+      const collectors = enabledCollectors(getDb(), REAL_SOURCES).map((cfg) => createRssCollector(cfg));
       await runCrawl(db, collectors);
       await buildGraphFromDb(db, defaultGazetteer());
       computeTrends(db);
       persist();
     },
-    intervalMs: resolveIntervalMs(process.env),
+    intervalMs: st.intervalMinutes * 60000,
     onError: (e) => console.error('[lumen] auto job failed', e)
   });
+  };
+
+  restartScheduler();
 
   createWindow();
   app.on('before-quit', () => persist());
@@ -303,6 +342,9 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+
+
 
 
 

@@ -221,3 +221,11 @@ body {
 /* 叙事 / 选中态 */
 .tag-narrative { color: #a371f7; border-color: #a371f755; }
 .insight-item.selected { border-color: var(--accent); background: var(--bg-hover); }
+
+/* 采集策略 */
+.settings-grid { display: grid; gap: 10px; }
+.settings-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.settings-num { width: 110px; }
+.toggle-btn.on { border-color: var(--ok); color: var(--ok); }
+.source-check { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.source-check input { accent-color: var(--accent-2); margin: 0; }
