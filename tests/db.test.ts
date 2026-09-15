@@ -30,13 +30,13 @@ describe('database', () => {
     expect(tables).toContain('article_entity');
   });
 
-  it('写入 schema_version = 6 且存在 insight/causal_chain 表', () => {
+  it('写入 schema_version = 7 且存在 insight/causal_chain 表', () => {
     const stmt = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`);
     const has = stmt.step();
     const row = stmt.getAsObject() as { value: string };
     stmt.free();
     expect(has).toBe(true);
-    expect(row.value).toBe('6');
+    expect(row.value).toBe('7');
     for (const table of ['insight', 'causal_chain']) {
       const res = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`);
       expect(res.length).toBeGreaterThan(0);

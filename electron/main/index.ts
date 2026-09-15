@@ -29,10 +29,14 @@ import { interpretCausalChain, summarizeNarrative, reasonCounterfactual } from '
 import { saveCausalChain, listCausalChains, getCausalChain } from './causal/repository.js';
 import { loadCollectSettings, saveCollectSettings, enabledCollectors } from './db/settings.js';
 import { buildMarkdownSnapshot, buildJsonSnapshot, type ExportSnapshotInput } from './export/snapshot.js';
+import { DEFAULT_WATCHLIST } from './stocks/watchlist.js';
+import { createStockProvider } from './stocks/provider.js';
+import { saveQuotes, loadQuotes, saveKline, loadKline, latestCacheTime } from './db/stocks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let lastAutoRunAt: string | null = null;
+const stockProvider = createStockProvider();
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -305,6 +309,50 @@ void app.whenReady().then(async () => {
         }
         await writeFile(target, content, 'utf8');
         return { ok: true, data: { saved: true, path: target } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksList: async () => {
+      const db = getDb();
+      return { ok: true, data: { updatedAt: latestCacheTime(db), quotes: loadQuotes(db) } };
+    },
+    runStocksRefresh: async () => {
+      const db = getDb();
+      try {
+        const quotes = await stockProvider.fetchQuotes(DEFAULT_WATCHLIST.map((w) => w.symbol));
+        const merged = quotes.map((q) => {
+          const known = DEFAULT_WATCHLIST.find(
+            (w) => w.symbol.toLowerCase() === q.symbol.toLowerCase()
+          );
+          return known ? { ...q, name: known.name } : q;
+        });
+        saveQuotes(db, merged);
+        persist();
+        return { ok: true, data: { updatedAt: latestCacheTime(db), quotes: loadQuotes(db) } };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const cached = loadQuotes(db);
+        if (cached.length > 0) {
+          return { ok: true, data: { updatedAt: latestCacheTime(db), quotes: cached, note: msg } };
+        }
+        return { ok: false, error: msg };
+      }
+    },
+    runStocksHistory: async (payload) => {
+      const p = (payload ?? {}) as { symbol?: string };
+      const symbol = String(p.symbol ?? '').trim();
+      if (!symbol) return { ok: false, error: 'missing symbol' };
+      const db = getDb();
+      const cached = loadKline(db, symbol);
+      if (cached.length > 0) return { ok: true, data: { symbol, points: cached } };
+      try {
+        const points = await stockProvider.fetchKline(symbol, 60);
+        if (points.length > 0) {
+          saveKline(db, symbol, points);
+          persist();
+        }
+        return { ok: true, data: { symbol, points } };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }

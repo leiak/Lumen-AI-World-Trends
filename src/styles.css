@@ -148,6 +148,19 @@ body {
 .player { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 14px; }
 .player-bar { display: flex; align-items: center; gap: 10px; }
 .player-bar input[type='range'] { flex: 1; accent-color: var(--accent); }
+
+/* 股票行情 */
+.toolbar { display: flex; align-items: center; gap: 12px; margin: 4px 0 10px; }
+.stock-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stock-table th, .stock-table td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.stock-table th:first-child, .stock-table td:first-child { text-align: left; }
+.stock-table th { color: var(--text-dim); font-weight: 600; }
+.stock-table tbody tr { cursor: pointer; }
+.stock-table tbody tr:hover { background: var(--bg-hover); }
+.stock-table tbody tr.sel { background: rgba(224, 85, 58, 0.12); }
+.gain { color: var(--accent); }
+.loss { color: var(--ok); }
+.warn { color: var(--accent-2); }
 .chip .up { color: var(--ok); margin-left: 4px; }
 .chip .down { color: #f85149; margin-left: 4px; }
 

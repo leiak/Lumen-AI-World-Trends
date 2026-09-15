@@ -6,10 +6,11 @@ import GraphTab from './components/GraphTab';
 import InsightsTab from './components/InsightsTab';
 import TrendsTab from './components/TrendsTab';
 import WorldTab from './components/WorldTab';
+import StocksTab from './components/StocksTab';
 import SearchTab from './components/SearchTab';
 import type { I18nKey } from './i18n/dict';
 
-type Tab = 'dashboard' | 'timeline' | 'graph' | 'insights' | 'trends' | 'world' | 'search';
+type Tab = 'dashboard' | 'timeline' | 'graph' | 'insights' | 'trends' | 'world' | 'stocks' | 'search';
 
 const TABS: { id: Tab; labelKey: I18nKey }[] = [
   { id: 'dashboard', labelKey: 'nav.dashboard' },
@@ -18,6 +19,7 @@ const TABS: { id: Tab; labelKey: I18nKey }[] = [
   { id: 'insights', labelKey: 'nav.insights' },
   { id: 'trends', labelKey: 'nav.trends' },
   { id: 'world', labelKey: 'nav.world' },
+  { id: 'stocks', labelKey: 'nav.stocks' },
   { id: 'search', labelKey: 'nav.search' }
 ];
 
@@ -54,6 +56,7 @@ function Shell() {
       {tab === 'insights' && <InsightsTab />}
       {tab === 'trends' && <TrendsTab />}
       {tab === 'world' && <WorldTab />}
+      {tab === 'stocks' && <StocksTab />}
       {tab === 'search' && <SearchTab />}
     </main>
   );

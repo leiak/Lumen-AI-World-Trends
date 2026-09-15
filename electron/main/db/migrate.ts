@@ -96,6 +96,34 @@ CREATE TABLE IF NOT EXISTS insight (
 CREATE INDEX IF NOT EXISTS idx_insight_generated ON insight(generated_at);
 `;
 
+const MIGRATION_7 = `
+CREATE TABLE IF NOT EXISTS stock_quote (
+  symbol TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  price REAL NOT NULL DEFAULT 0,
+  prev_close REAL NOT NULL DEFAULT 0,
+  change REAL NOT NULL DEFAULT 0,
+  change_pct REAL NOT NULL DEFAULT 0,
+  open REAL,
+  high REAL,
+  low REAL,
+  volume REAL,
+  amount REAL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stock_kline (
+  symbol TEXT NOT NULL,
+  date TEXT NOT NULL,
+  open REAL NOT NULL DEFAULT 0,
+  close REAL NOT NULL DEFAULT 0,
+  high REAL NOT NULL DEFAULT 0,
+  low REAL NOT NULL DEFAULT 0,
+  volume REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (symbol, date)
+);
+CREATE INDEX IF NOT EXISTS idx_kline_symbol ON stock_kline(symbol);
+`;
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
@@ -103,9 +131,10 @@ export function migrate(db: Database): void {
   db.exec(MIGRATION_4);
   db.exec(MIGRATION_5);
   db.exec(MIGRATION_6);
+  db.exec(MIGRATION_7);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '6');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '7');`
   );
 }
 

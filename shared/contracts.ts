@@ -19,7 +19,10 @@ export const ALL_CHANNELS = [
   'search:fulltext',
   'collector:manualRun',
   'graph:build',
-  'export:snapshot'
+  'export:snapshot',
+  'stocks:list',
+  'stocks:refresh',
+  'stocks:history'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

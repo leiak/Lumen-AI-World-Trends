@@ -10,6 +10,7 @@ import type { CountryDetail, CountrySeriesResult } from '../../../shared/world.j
 import type { WorldTimeline } from '../../../shared/world.js';
 import type { CausalChain } from '../../../shared/causal.js';
 import type { SettingsView } from '../../../shared/settings.js';
+import type { StockHistoryResult, StocksView } from '../../../shared/stocks.js';
 import type { ExportResult } from '../../../shared/contracts.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
@@ -38,6 +39,9 @@ export interface IpcDeps {
   runExportSnapshot?: (payload: unknown) => Promise<IpcResponse<ExportResult>>;
   runSettingsGet?: () => Promise<IpcResponse<SettingsView>>;
   runSettingsUpdate?: (payload: unknown) => Promise<IpcResponse<SettingsView>>;
+  runStocksList?: () => Promise<IpcResponse<StocksView>>;
+  runStocksRefresh?: () => Promise<IpcResponse<StocksView>>;
+  runStocksHistory?: (payload: unknown) => Promise<IpcResponse<StockHistoryResult>>;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -70,6 +74,9 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runExportSnapshot) ipcMain.handle('export:snapshot', (_e, payload) => deps.runExportSnapshot!(payload));
   if (deps.runSettingsGet) ipcMain.handle('settings:get', () => deps.runSettingsGet!());
   if (deps.runSettingsUpdate) ipcMain.handle('settings:update', (_e, payload) => deps.runSettingsUpdate!(payload));
+  if (deps.runStocksList) attach('stocks:list', deps.runStocksList);
+  if (deps.runStocksRefresh) attach('stocks:refresh', deps.runStocksRefresh);
+  if (deps.runStocksHistory) ipcMain.handle('stocks:history', (_e, payload) => deps.runStocksHistory!(payload));
 }
 
 
