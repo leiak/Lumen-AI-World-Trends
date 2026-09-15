@@ -68,10 +68,15 @@ export default function InsightsTab() {
   const causalList = useInvoke<CausalChain[]>('causality:list');
   const causalGen = useInvoke<CausalChain>('causality:generate');
   const narratives = useInvoke<CausalChain[]>('causality:narratives');
+  const narSum = useInvoke<CausalChain>('causality:summarize');
+  const narCf = useInvoke<{ text: string; model: string }>('causality:counterfactual');
   const [entity, setEntity] = useState('');
   const [useAi, setUseAi] = useState(true);
   const [selectedChain, setSelectedChain] = useState<CausalChain | null>(null);
   const [selectedNarrative, setSelectedNarrative] = useState<CausalChain | null>(null);
+  const [narSummary, setNarSummary] = useState<CausalChain | null>(null);
+  const [cfText, setCfText] = useState<string | null>(null);
+  const [cfHypothesis, setCfHypothesis] = useState('');
 
   const exportSnap = useInvoke<{ saved: boolean; path?: string }>('export:snapshot');
   const crawl = useInvoke<{ fetched?: number; addedNew?: number }>('collector:manualRun');
@@ -92,6 +97,18 @@ export default function InsightsTab() {
     }
   }
 
+  async function handleNarSummary() {
+    if (!selectedNarrative) return;
+    const res = await narSum.run({ chain: selectedNarrative });
+    if (res?.ok && res.data) setNarSummary(res.data);
+  }
+
+  async function handleNarCounterfactual() {
+    if (!selectedNarrative) return;
+    const hypothesis = cfHypothesis.trim();
+    const res = await narCf.run({ chain: selectedNarrative, hypothesis: hypothesis || undefined });
+    if (res?.ok && res.data) setCfText(res.data.text);
+  }
   async function handleGen(kind: 'causal' | 'weekly') {
     const run = kind === 'causal' ? gen : weekly;
     await run.run();
@@ -238,7 +255,7 @@ export default function InsightsTab() {
                     <li
                       key={n.id}
                       className={`insight-item${selectedNarrative?.id === n.id ? ' selected' : ''}`}
-                      onClick={() => setSelectedNarrative(n)}
+                      onClick={() => { setSelectedNarrative(n); setNarSummary(null); setCfText(null); }}
                     >
                       <span className="tag tag-narrative">{t('insights.nar.title')}</span>
                       <span className="insight-title">
@@ -255,6 +272,35 @@ export default function InsightsTab() {
                 {selectedNarrative && (
                   <div style={{ marginTop: 12 }}>
                     <ChainView chain={selectedNarrative} />
+                    <div className='chain-bar' style={{ marginTop: 12 }}>
+                      <button className='btn primary' onClick={() => void handleNarSummary()} disabled={narSum.loading}>
+                        {narSum.loading ? t('insights.nar.summarizing') : t('insights.nar.summarize')}
+                      </button>
+                      <input
+                        className='input chain-input'
+                        placeholder={t('insights.nar.cfPlaceholder')}
+                        value={cfHypothesis}
+                        onChange={(e) => setCfHypothesis(e.target.value)}
+                      />
+                      <button className='btn' onClick={() => void handleNarCounterfactual()} disabled={narCf.loading}>
+                        {narCf.loading ? t('common.loading') : t('insights.nar.cfDo')}
+                      </button>
+                    </div>
+                    {(narSum.error || narCf.error) && (
+                      <p className='err'>{t('insights.failed')}: {narSum.error ?? narCf.error}</p>
+                    )}
+                    {narSummary && (
+                      <div style={{ marginTop: 12 }}>
+                        <h3 style={{ marginBottom: 6 }}>{t('insights.nar.summarize')}</h3>
+                        <div className='mono'>{narSummary.summary ?? ''}</div>
+                      </div>
+                    )}
+                    {cfText && (
+                      <div style={{ marginTop: 12 }}>
+                        <h3 style={{ marginBottom: 6 }}>{t('insights.nar.counterfactual')}</h3>
+                        <div className='mono'>{cfText}</div>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -313,3 +359,6 @@ export default function InsightsTab() {
     </section>
   );
 }
+
+
+

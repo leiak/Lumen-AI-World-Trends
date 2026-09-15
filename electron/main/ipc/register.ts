@@ -29,6 +29,8 @@ export interface IpcDeps {
   runCausalityGenerate?: (payload: unknown) => Promise<IpcResponse<CausalChain>>;
   runCausalityChain?: (payload: unknown) => Promise<IpcResponse<CausalChain | null>>;
   runCausalityNarratives?: (payload: unknown) => Promise<IpcResponse<CausalChain[]>>;
+  runCausalitySummarize?: (payload: unknown) => Promise<IpcResponse<CausalChain>>;
+  runCausalityCounterfactual?: (payload: unknown) => Promise<IpcResponse<{ text: string; model: string }>>;
   runCountrySeries?: (payload: unknown) => Promise<IpcResponse<CountrySeriesResult>>;
   runExportSnapshot?: (payload: unknown) => Promise<IpcResponse<ExportResult>>;
 }
@@ -56,7 +58,10 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runCausalityGenerate) ipcMain.handle('causality:generate', (_e, payload) => deps.runCausalityGenerate!(payload));
   if (deps.runCausalityChain) ipcMain.handle('causality:chain', (_e, payload) => deps.runCausalityChain!(payload));
   if (deps.runCausalityNarratives) ipcMain.handle('causality:narratives', (_e, payload) => deps.runCausalityNarratives!(payload));
+  if (deps.runCausalitySummarize) ipcMain.handle('causality:summarize', (_e, payload) => deps.runCausalitySummarize!(payload));
+  if (deps.runCausalityCounterfactual) ipcMain.handle('causality:counterfactual', (_e, payload) => deps.runCausalityCounterfactual!(payload));
   if (deps.runCountrySeries) ipcMain.handle('countries:series', (_e, payload) => deps.runCountrySeries!(payload));
   if (deps.runExportSnapshot) ipcMain.handle('export:snapshot', (_e, payload) => deps.runExportSnapshot!(payload));
 }
+
 

@@ -96,6 +96,11 @@ const zhDict = {
   'insights.nar.refresh': '刷新',
   'insights.nar.empty': '暂无叙事。先生成因果链，或采集更多数据。',
   'insights.nar.entities': '{a} 个实体参与',
+  'insights.nar.summarize': 'AI 摘要',
+  'insights.nar.summarizing': '摘要生成中…',
+  'insights.nar.counterfactual': '反事实推演',
+  'insights.nar.cfDo': '推演',
+  'insights.nar.cfPlaceholder': '自定义假设（如：如果首个事件未发生）',
   'insights.guide.title': '三步上手',
   'insights.guide.step1': '1. 手动采集全球新闻源',
   'insights.guide.step2': '2. 构建事件图谱',
@@ -209,6 +214,11 @@ const enDict: Record<I18nKey, string> = {
   'insights.nar.refresh': 'Refresh',
   'insights.nar.empty': 'No narratives yet. Generate chains or crawl more data first.',
   'insights.nar.entities': '{a} entities involved',
+  'insights.nar.summarize': 'AI summary',
+  'insights.nar.summarizing': 'Summarizing…',
+  'insights.nar.counterfactual': 'Counterfactual',
+  'insights.nar.cfDo': 'Reason',
+  'insights.nar.cfPlaceholder': 'Custom hypothesis (e.g. if the first event had not happened)',
   'insights.guide.title': 'Get started in 3 steps',
   'insights.guide.step1': '1. Crawl global news sources',
   'insights.guide.step2': '2. Build the event graph',
@@ -232,6 +242,7 @@ export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
 }
 export const ZH_DICT = zhDict;
 export const EN_DICT = enDict;
+
 
 
 

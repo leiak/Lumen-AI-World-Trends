@@ -24,7 +24,7 @@ import { loadDashboardSnapshot } from './dash/summary.js';
 import { countryDetail, countrySeries } from './world/detail.js';
 import { buildCausalChain } from './causal/build.js';
 import { buildGlobalNarratives } from './causal/merge.js';
-import { interpretCausalChain } from './causal/interpret.js';
+import { interpretCausalChain, summarizeNarrative, reasonCounterfactual } from './causal/interpret.js';
 import { saveCausalChain, listCausalChains, getCausalChain } from './causal/repository.js';
 import { buildMarkdownSnapshot, buildJsonSnapshot, type ExportSnapshotInput } from './export/snapshot.js';
 
@@ -220,6 +220,28 @@ void app.whenReady().then(async () => {
         })
       };
     },
+    runCausalitySummarize: async (payload) => {
+      const chain = (payload ?? {}) as { chain?: import('../../shared/causal.js').CausalChain };
+      if (!chain.chain || chain.chain.nodes.length === 0) {
+        return { ok: false, error: 'missing chain' };
+      }
+      try {
+        return { ok: true, data: await summarizeNarrative(provider, chain.chain) };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runCausalityCounterfactual: async (payload) => {
+      const p = (payload ?? {}) as { chain?: import('../../shared/causal.js').CausalChain; hypothesis?: string };
+      if (!p.chain || p.chain.nodes.length === 0) {
+        return { ok: false, error: 'missing chain' };
+      }
+      try {
+        return { ok: true, data: await reasonCounterfactual(provider, p.chain, p.hypothesis) };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
     runExportSnapshot: async (payload) => {
       const p = (payload ?? {}) as { format?: 'md' | 'json'; path?: string };
       const format = p.format === 'json' ? 'json' : 'md';
@@ -281,6 +303,9 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+
+
 
 
 

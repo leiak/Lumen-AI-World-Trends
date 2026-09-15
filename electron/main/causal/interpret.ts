@@ -58,3 +58,78 @@ export async function interpretCausalChain(
   const { links, summary } = parseCausalOutput(chain, output);
   return { ...chain, links, summary, model: provider.name, generatedAt: now };
 }
+
+export function buildNarrativeSummaryPrompt(chain: CausalChain): ChatMessage[] {
+  const lines = chain.nodes.map(
+    (n, i) => `${i + 1}. ${n.title}（${n.occurredAt.slice(0, 10)}，${n.articleCount} 篇）`
+  );
+  const entities = chain.entities?.length ? chain.entities.join('、') : chain.rootEntity;
+  const linkLines = chain.links
+    .map(
+      (l, i) =>
+        `${i}: ${l.fromEventId} → ${l.toEventId}（锚点 ${l.anchor}${l.assertion ? `：${l.assertion}` : ''}）`
+    )
+    .join('\n');
+  return [
+    {
+      role: 'system',
+      content:
+        '你是全球事件叙事分析师。基于给定事件序列与因果链路，用一句话概括这段叙事的整体走向与影响（不超过 150 字）。格式严格为：SUMMARY: <内容>。只输出这一行，不要额外解释。'
+    },
+    {
+      role: 'user',
+      content: `参与实体: ${entities}\n事件序列:\n${lines.join('\n')}\n因果链路:\n${linkLines}`
+    }
+  ];
+}
+
+export function parseNarrativeSummary(output: string): string {
+  for (const line of output.split('\n')) {
+    const m = line.match(/SUMMARY\s*[:：]\s*(.+)/i);
+    if (m) return m[1].trim();
+  }
+  return output.trim();
+}
+
+export async function summarizeNarrative(
+  provider: AiProvider,
+  chain: CausalChain,
+  now = new Date().toISOString()
+): Promise<CausalChain> {
+  const summary = parseNarrativeSummary(await provider.generate(buildNarrativeSummaryPrompt(chain)));
+  return { ...chain, summary, model: provider.name, generatedAt: now };
+}
+
+export function buildCounterfactualPrompt(chain: CausalChain, hypothesis?: string): ChatMessage[] {
+  const lines = chain.nodes.map((n, i) => `${i + 1}. ${n.title}（${n.occurredAt.slice(0, 10)}）`);
+  const entities = chain.entities?.length ? chain.entities.join('、') : chain.rootEntity;
+  const h = hypothesis?.trim() || `如果首个事件「${chain.nodes[0]?.title ?? ''}」没有发生`;
+  return [
+    {
+      role: 'system',
+      content:
+        '你是反事实推演分析师。基于给定事件序列与假设，推演世界走向会有哪些不同（不超过 150 字）。格式严格为：COUNTERFACTUAL: <内容>。只输出这一行，不要额外解释。'
+    },
+    {
+      role: 'user',
+      content: `参与实体: ${entities}\n事件序列:\n${lines.join('\n')}\n反事实假设: ${h}`
+    }
+  ];
+}
+
+export function parseCounterfactual(output: string): string {
+  for (const line of output.split('\n')) {
+    const m = line.match(/COUNTERFACTUAL\s*[:：]\s*(.+)/i);
+    if (m) return m[1].trim();
+  }
+  return output.trim();
+}
+
+export async function reasonCounterfactual(
+  provider: AiProvider,
+  chain: CausalChain,
+  hypothesis?: string
+): Promise<{ text: string; model: string; generatedAt: string }> {
+  const text = parseCounterfactual(await provider.generate(buildCounterfactualPrompt(chain, hypothesis)));
+  return { text, model: provider.name, generatedAt: new Date().toISOString() };
+}

@@ -9,6 +9,8 @@ export const ALL_CHANNELS = [
   'causality:generate',
   'causality:chain',
   'causality:narratives',
+  'causality:summarize',
+  'causality:counterfactual',
   'timeline:replay',
   'insights:generate',
   'insights:list',
@@ -45,5 +47,6 @@ export interface ExportResult {
   path?: string;
   error?: string;
 }
+
 
 
