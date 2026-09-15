@@ -143,6 +143,11 @@ body {
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { background: var(--bg-hover); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; font-size: 13px; color: var(--text); }
 .chip .n { color: var(--accent-2); font-weight: 700; margin-left: 5px; }
+
+/* 世界地图按日回放 */
+.player { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 14px; }
+.player-bar { display: flex; align-items: center; gap: 10px; }
+.player-bar input[type='range'] { flex: 1; accent-color: var(--accent); }
 .chip .up { color: var(--ok); margin-left: 4px; }
 .chip .down { color: #f85149; margin-left: 4px; }
 

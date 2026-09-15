@@ -7,6 +7,7 @@ import type { TimelineEvent } from '../../../shared/timeline.js';
 import type { GraphView } from '../../../shared/graph-view.js';
 import type { DashboardSnapshot } from '../../../shared/dashboard.js';
 import type { CountryDetail, CountrySeriesResult } from '../../../shared/world.js';
+import type { WorldTimeline } from '../../../shared/world.js';
 import type { CausalChain } from '../../../shared/causal.js';
 import type { SettingsView } from '../../../shared/settings.js';
 import type { ExportResult } from '../../../shared/contracts.js';
@@ -33,6 +34,7 @@ export interface IpcDeps {
   runCausalitySummarize?: (payload: unknown) => Promise<IpcResponse<CausalChain>>;
   runCausalityCounterfactual?: (payload: unknown) => Promise<IpcResponse<{ text: string; model: string }>>;
   runCountrySeries?: (payload: unknown) => Promise<IpcResponse<CountrySeriesResult>>;
+  runWorldTimeline?: (payload: unknown) => Promise<IpcResponse<WorldTimeline>>;
   runExportSnapshot?: (payload: unknown) => Promise<IpcResponse<ExportResult>>;
   runSettingsGet?: () => Promise<IpcResponse<SettingsView>>;
   runSettingsUpdate?: (payload: unknown) => Promise<IpcResponse<SettingsView>>;
@@ -64,6 +66,7 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runCausalitySummarize) ipcMain.handle('causality:summarize', (_e, payload) => deps.runCausalitySummarize!(payload));
   if (deps.runCausalityCounterfactual) ipcMain.handle('causality:counterfactual', (_e, payload) => deps.runCausalityCounterfactual!(payload));
   if (deps.runCountrySeries) ipcMain.handle('countries:series', (_e, payload) => deps.runCountrySeries!(payload));
+  if (deps.runWorldTimeline) ipcMain.handle('world:timeline', (_e, payload) => deps.runWorldTimeline!(payload));
   if (deps.runExportSnapshot) ipcMain.handle('export:snapshot', (_e, payload) => deps.runExportSnapshot!(payload));
   if (deps.runSettingsGet) ipcMain.handle('settings:get', () => deps.runSettingsGet!());
   if (deps.runSettingsUpdate) ipcMain.handle('settings:update', (_e, payload) => deps.runSettingsUpdate!(payload));

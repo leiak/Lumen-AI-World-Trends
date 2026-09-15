@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18n';
 import EChart from './EChart';
 import { worldGeo, normalizeCountry, countriesToMapData } from '../world/geo';
 import type { TrendsResult } from '../../shared/trend';
-import type { CountryDetail, CountrySeriesResult } from '../../shared/world';
+import type { CountryDetail, CountrySeriesResult, WorldTimeline } from '../../shared/world';
 
 echarts.registerMap('world', worldGeo as unknown as Parameters<typeof echarts.registerMap>[1]);
 
@@ -14,11 +14,16 @@ export default function WorldTab() {
   const list = useInvoke<TrendsResult>('topics:list');
   const detail = useInvoke<CountryDetail>('countries:detail');
   const series = useInvoke<CountrySeriesResult>('countries:series');
+  const timeline = useInvoke<WorldTimeline>('world:timeline');
   const [selected, setSelected] = useState<string[]>([]);
   const [detailName, setDetailName] = useState<string | null>(null);
+  const [replay, setReplay] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [replayIdx, setReplayIdx] = useState(0);
 
   useEffect(() => {
     void list.run();
+    void timeline.run({ days: 14 });
   }, []);
 
   useEffect(() => {
@@ -28,6 +33,14 @@ export default function WorldTab() {
   useEffect(() => {
     if (selected.length >= 2) void series.run({ names: selected });
   }, [selected]);
+
+  useEffect(() => {
+    if (!playing || !timeline.data?.dates.length) return;
+    const timer = setInterval(() => {
+      setReplayIdx((i) => (i + 1) % (timeline.data?.dates.length ?? 1));
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [playing, timeline.data]);
 
   function toggleCountry(name: string) {
     setDetailName(name);
@@ -40,8 +53,35 @@ export default function WorldTab() {
     );
   }
 
+  function exitReplay() {
+    setReplay(false);
+    setPlaying(false);
+    setReplayIdx(0);
+  }
+
+  function enterReplay() {
+    if (!timeline.data?.dates.length) return;
+    setReplay(true);
+    setPlaying(true);
+  }
+
+  function togglePlay() {
+    setPlaying((p) => !p);
+  }
+
+  function onReplaySlider(e: React.ChangeEvent<HTMLInputElement>) {
+    setReplayIdx(Number(e.target.value));
+    setPlaying(false);
+  }
+
   const countries = list.data?.countries ?? [];
-  const mapData = countriesToMapData(countries.map((c) => ({ name: c.name, count: c.count })));
+  const timelineDates = timeline.data?.dates ?? [];
+  const replayActive = replay && Boolean(timeline.data) && timelineDates.length > 0;
+  const shownCountries =
+    replayActive && timeline.data
+      ? (timeline.data.byDate[replayIdx]?.countries ?? [])
+      : countries.map((c) => ({ name: c.name, count: c.count }));
+  const mapData = countriesToMapData(shownCountries);
   const mapMax = Math.max(1, ...mapData.map((d) => d.value));
 
   function onMapClick(params: unknown) {
@@ -61,10 +101,44 @@ export default function WorldTab() {
 
       <div className="card">
         <h3>{t('world.map')}</h3>
+        <div className="player">
+          <div className="chips">
+            <button className={`chip pick${!replay ? ' on' : ''}`} onClick={exitReplay}>
+              {t('world.pb.total')}
+            </button>
+            <button className={`chip pick${replay ? ' on' : ''}`} onClick={enterReplay}>
+              {t('world.pb.replay')}
+            </button>
+          </div>
+          {replay && (
+            <div className="player-bar">
+              {replayActive ? (
+                <>
+                  <button className="btn primary" onClick={togglePlay}>
+                    {playing ? t('world.pb.pause') : t('world.pb.play')}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, timelineDates.length - 1)}
+                    value={replayIdx}
+                    onChange={onReplaySlider}
+                    aria-label={t('world.pb.date')}
+                  />
+                  <span className="muted">{timelineDates[replayIdx]}</span>
+                </>
+              ) : (
+                <span className="muted">
+                  {timeline.loading ? t('world.loading') : t('world.pb.noData')}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
         <div className="chart-box tall">
           <EChart
             height={420}
-            deps={[list.data?.countries, t]}
+            deps={[list.data?.countries, timeline.data, replay, replayIdx, t]}
             onClick={onMapClick}
             buildOption={() => ({
               tooltip: { trigger: 'item' },

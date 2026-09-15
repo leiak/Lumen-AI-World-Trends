@@ -22,6 +22,7 @@ import { createProvider } from './ai/provider.js';
 import { startScheduler, resolveIntervalMs } from './scheduler.js'
 import { loadDashboardSnapshot } from './dash/summary.js';
 import { countryDetail, countrySeries } from './world/detail.js';
+import { countryDayTimeline } from './world/timeline.js';
 import { buildCausalChain } from './causal/build.js';
 import { buildGlobalNarratives } from './causal/merge.js';
 import { interpretCausalChain, summarizeNarrative, reasonCounterfactual } from './causal/interpret.js';
@@ -176,6 +177,10 @@ void app.whenReady().then(async () => {
             : []
           : [];
       return { ok: true, data: countrySeries(getDb(), names) };
+    },
+    runWorldTimeline: async (payload) => {
+      const p = (payload ?? {}) as { days?: number };
+      return { ok: true, data: countryDayTimeline(getDb(), { days: Number(p.days) || undefined }) };
     },
     runCausalityList: async (payload) => {
       const limit =

@@ -1,6 +1,6 @@
 import type { TopTopic } from './dashboard.js';
 import type { TimelineArticle } from './timeline.js';
-import type { TrendPoint } from './trend.js';
+import type { CountryHeat, TrendPoint } from './trend.js';
 
 export interface CountryDetail {
   name: string;
@@ -11,4 +11,14 @@ export interface CountryDetail {
 
 export interface CountrySeriesResult {
   series: { name: string; points: TrendPoint[] }[];
+}
+
+export interface WorldTimelineEntry {
+  date: string;
+  countries: CountryHeat[];
+}
+
+export interface WorldTimeline {
+  dates: string[];
+  byDate: WorldTimelineEntry[];
 }

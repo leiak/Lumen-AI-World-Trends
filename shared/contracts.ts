@@ -5,6 +5,7 @@ export const ALL_CHANNELS = [
   'graph:query',
   'countries:detail',
   'countries:series',
+  'world:timeline',
   'causality:list',
   'causality:generate',
   'causality:chain',
