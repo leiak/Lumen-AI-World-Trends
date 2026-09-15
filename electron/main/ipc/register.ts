@@ -8,6 +8,7 @@ import type { GraphView } from '../../../shared/graph-view.js';
 import type { DashboardSnapshot } from '../../../shared/dashboard.js';
 import type { CountryDetail, CountrySeriesResult } from '../../../shared/world.js';
 import type { CausalChain } from '../../../shared/causal.js';
+import type { ExportResult } from '../../../shared/contracts.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
 
@@ -28,6 +29,7 @@ export interface IpcDeps {
   runCausalityGenerate?: (payload: unknown) => Promise<IpcResponse<CausalChain>>;
   runCausalityChain?: (payload: unknown) => Promise<IpcResponse<CausalChain | null>>;
   runCountrySeries?: (payload: unknown) => Promise<IpcResponse<CountrySeriesResult>>;
+  runExportSnapshot?: (payload: unknown) => Promise<IpcResponse<ExportResult>>;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -53,4 +55,5 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runCausalityGenerate) ipcMain.handle('causality:generate', (_e, payload) => deps.runCausalityGenerate!(payload));
   if (deps.runCausalityChain) ipcMain.handle('causality:chain', (_e, payload) => deps.runCausalityChain!(payload));
   if (deps.runCountrySeries) ipcMain.handle('countries:series', (_e, payload) => deps.runCountrySeries!(payload));
+  if (deps.runExportSnapshot) ipcMain.handle('export:snapshot', (_e, payload) => deps.runExportSnapshot!(payload));
 }

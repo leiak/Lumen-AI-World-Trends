@@ -90,7 +90,19 @@ const zhDict = {
   'insights.causal.kind.ai': 'AI 断言',
   'insights.causal.summary': '因果摘要',
   'insights.causal.history': '历史因果链（本地缓存）',
-  'insights.causal.historyEmpty': '暂无因果链。生成一条试试。'
+  'insights.causal.historyEmpty': '暂无因果链。生成一条试试。',
+  'insights.guide.title': '三步上手',
+  'insights.guide.step1': '1. 手动采集全球新闻源',
+  'insights.guide.step2': '2. 构建事件图谱',
+  'insights.guide.step3': '3. 生成 AI 解读与因果链',
+  'insights.guide.crawl': '去采集',
+  'insights.guide.build': '去建图',
+  'insights.guide.hint': '采集与建图在「总览」Tab 同样可用。',
+  'insights.export': '导出快照',
+  'insights.exporting': '导出中…',
+  'insights.exported': '已导出: {path}',
+  'insights.exportFailed': '导出失败: {msg}',
+  'insights.exportCanceled': '已取消导出。'
 } as const;
 
 export type I18nKey = keyof typeof zhDict;
@@ -186,7 +198,19 @@ const enDict: Record<I18nKey, string> = {
   'insights.causal.kind.ai': 'AI',
   'insights.causal.summary': 'Causal summary',
   'insights.causal.history': 'History (cached locally)',
-  'insights.causal.historyEmpty': 'No causal chains yet. Generate one.'
+  'insights.causal.historyEmpty': 'No causal chains yet. Generate one.',
+  'insights.guide.title': 'Get started in 3 steps',
+  'insights.guide.step1': '1. Crawl global news sources',
+  'insights.guide.step2': '2. Build the event graph',
+  'insights.guide.step3': '3. Generate insights & causal chains',
+  'insights.guide.crawl': 'Crawl',
+  'insights.guide.build': 'Build',
+  'insights.guide.hint': 'Crawling & building are also available in the Overview tab.',
+  'insights.export': 'Export snapshot',
+  'insights.exporting': 'Exporting…',
+  'insights.exported': 'Exported: {path}',
+  'insights.exportFailed': 'Export failed: {msg}',
+  'insights.exportCanceled': 'Export canceled.'
 };
 
 export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
@@ -198,5 +222,6 @@ export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
 }
 export const ZH_DICT = zhDict;
 export const EN_DICT = enDict;
+
 
 

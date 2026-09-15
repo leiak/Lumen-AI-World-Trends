@@ -14,7 +14,8 @@ export const ALL_CHANNELS = [
   'insights:weekly',
   'search:fulltext',
   'collector:manualRun',
-  'graph:build'
+  'graph:build',
+  'export:snapshot'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];
@@ -37,3 +38,10 @@ export interface IpcResponse<T = unknown> {
 }
 
 export type IpcHandler = (payload: unknown) => IpcResponse<unknown>;
+
+export interface ExportResult {
+  saved: boolean;
+  path?: string;
+  error?: string;
+}
+

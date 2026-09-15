@@ -1,5 +1,6 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import path from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { getEngineStatus } from './engine.js';
 import { registerIpc } from './ipc/register.js';
@@ -24,6 +25,7 @@ import { countryDetail, countrySeries } from './world/detail.js';
 import { buildCausalChain } from './causal/build.js';
 import { interpretCausalChain } from './causal/interpret.js';
 import { saveCausalChain, listCausalChains, getCausalChain } from './causal/repository.js';
+import { buildMarkdownSnapshot, buildJsonSnapshot, type ExportSnapshotInput } from './export/snapshot.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -206,6 +208,40 @@ void app.whenReady().then(async () => {
           ? String((payload as { id?: string }).id ?? '')
           : '';
       return { ok: true, data: id ? getCausalChain(getDb(), id) : null };
+    },
+    runExportSnapshot: async (payload) => {
+      const p = (payload ?? {}) as { format?: 'md' | 'json'; path?: string };
+      const format = p.format === 'json' ? 'json' : 'md';
+      const ext = format === 'json' ? 'json' : 'md';
+      const stamp = new Date().toISOString().slice(0, 16).replace(/:|T/g, '-');
+      const db = getDb();
+      const input: ExportSnapshotInput = {
+        generatedAt: new Date().toISOString(),
+        insights: listInsights(db),
+        chains: listCausalChains(db),
+        trends: computeTrends(db)
+      };
+      const content = format === 'json' ? buildJsonSnapshot(input) : buildMarkdownSnapshot(input);
+      try {
+        let target = p.path;
+        if (!target) {
+          const win = BrowserWindow.getAllWindows()[0];
+          const opts: Electron.SaveDialogOptions = {
+            title: 'Lumen 导出快照',
+            defaultPath: `lumen-snapshot-${stamp}.${ext}`,
+            filters: format === 'json'
+              ? [{ name: 'JSON', extensions: ['json'] }]
+              : [{ name: 'Markdown', extensions: ['md'] }]
+          };
+          const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+          if (res.canceled || !res.filePath) return { ok: true, data: { saved: false } };
+          target = res.filePath;
+        }
+        await writeFile(target, content, 'utf8');
+        return { ok: true, data: { saved: true, path: target } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     }
   });
 
@@ -233,3 +269,6 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+
+
