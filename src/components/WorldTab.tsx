@@ -4,6 +4,7 @@ import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
 import EChart from './EChart';
 import { worldGeo, normalizeCountry, countriesToMapData } from '../world/geo';
+import { aggregateRegions, regionOfCountry } from '../world/regions';
 import type { TrendsResult } from '../../shared/trend';
 import type { CountryDetail, CountrySeriesResult, WorldTimeline } from '../../shared/world';
 
@@ -20,6 +21,7 @@ export default function WorldTab() {
   const [replay, setReplay] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [replayIdx, setReplayIdx] = useState(0);
+  const [dim, setDim] = useState<'country' | 'region'>('country');
 
   useEffect(() => {
     void list.run();
@@ -81,7 +83,15 @@ export default function WorldTab() {
     replayActive && timeline.data
       ? (timeline.data.byDate[replayIdx]?.countries ?? [])
       : countries.map((c) => ({ name: c.name, count: c.count }));
-  const mapData = countriesToMapData(shownCountries);
+  const regionHeat = aggregateRegions(shownCountries);
+  const regionTotal = new Map(regionHeat.map((r) => [r.key, r.count]));
+  const mapData =
+    dim === 'region'
+      ? countriesToMapData(shownCountries).map((d) => ({
+          name: d.name,
+          value: regionTotal.get(regionOfCountry(d.name)) ?? 0
+        }))
+      : countriesToMapData(shownCountries);
   const mapMax = Math.max(1, ...mapData.map((d) => d.value));
 
   function onMapClick(params: unknown) {
@@ -101,6 +111,20 @@ export default function WorldTab() {
 
       <div className="card">
         <h3>{t('world.map')}</h3>
+        <div className="chips" style={{ marginTop: 4, marginBottom: 10 }}>
+          <button
+            className={`chip pick${dim === 'country' ? ' on' : ''}`}
+            onClick={() => setDim('country')}
+          >
+            {t('world.dim.country')}
+          </button>
+          <button
+            className={`chip pick${dim === 'region' ? ' on' : ''}`}
+            onClick={() => setDim('region')}
+          >
+            {t('world.dim.region')}
+          </button>
+        </div>
         <div className="player">
           <div className="chips">
             <button className={`chip pick${!replay ? ' on' : ''}`} onClick={exitReplay}>
@@ -173,6 +197,19 @@ export default function WorldTab() {
       <div className="card">
         {countries.length === 0 ? (
           <p className="muted">{list.data ? t('world.empty') : t('world.loading')}</p>
+        ) : dim === 'region' ? (
+          <>
+            <h3>{t('world.regions')}</h3>
+            <div className="chips" style={{ marginTop: 8 }}>
+              {regionHeat.map((r) => (
+                <span className="chip" key={r.key}>
+                  {t(`world.region.${r.key}`)}
+                  <span className="n">{r.count}</span>
+                </span>
+              ))}
+            </div>
+            <p className="muted" style={{ marginTop: 10 }}>{t('world.region.hint')}</p>
+          </>
         ) : (
           <>
             <h3>{t('world.title')} (Top {countries.length})</h3>
