@@ -1,6 +1,6 @@
 # Lumen — World Trends
 
-一个**纯客户端、无服务端的双语音视频台**：持续抓取全球热点新闻，用**事件图谱**表达世界元素间的关系，用**趋势引擎**量化话题的变动，用 **AI 因果解读**讲清“世界为什么在变”，全部数据**本地缓存、可离线回看/检索**。
+一个**纯客户端、无服务端的双语热点台**：持续抓取全球热点新闻，用**事件图谱**表达世界元素间的关系，用**趋势引擎**量化话题的变动，用 **AI 因果解读**讲清“世界为什么在变”，全部数据**本地缓存、可离线回看/检索**。
 
 > 名字 *Lumen* 取意“光”，寓意照亮世界趋势。
 
@@ -12,9 +12,10 @@
 - **事件图谱**：实体抽取（词典 gazetteer）→ 共现关系 → 共享实体聚类成事件，落库为 entity / event / edge。
 - **趋势引擎**：按时间桶计算话题热度序列、动量（涨/跌）、世界热点（国家维度）。
 - **AI 因果解读**：对最热话题生成中文因果解读；provider 可插拔（火山方舟 ARK / Mock）。
+- **因果链**：输入任意实体，把其相关事件按时间串成链路（共享实体作锚点），可选 AI 逐段补因果断言 + 整体摘要。
 - **桌面看板**：7 个 Tab（总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索）。
 - **总览数据**：文章/实体/事件/关系边/今日新增指标卡 + 今日热点 + 调度状态（`dashboard:today`）。
-- **AI 解读中心**：因果解读 + 周报生成，解读历史本地缓存（`insights:list` / `insights:weekly`）。
+- **AI 解读中心**：因果解读 + 周报生成 + 实体因果链，历史本地缓存。
 - **时间线回放**：把聚类出的事件按时间倒序组织成可回看的时间线，附其关联文章。
 - **事件图谱可视化**：以力导向图展示实体节点与共现边，可开/关事件节点（菱形）+ 事件→实体边，可拖拽、滚轮缩放。
 - **自动调度**：冷启动即自行跑一轮「采集→图谱→趋势」，此后每 30 分钟自动刷新（`LUMEN_INTERVAL_MINUTES` 可调）。
@@ -31,11 +32,12 @@
    ├─ 采集 collector (rss / html 适配器)
    ├─ 图谱 graph (entity/event/edge + 聚类)
    ├─ 趋势 trends (时间序列 / 动量 / 热力)
+   ├─ 因果 causal (规则链构建 + AI 断言)
    └─ AI ai (ARK / Mock 可插拔 provider)
 数据层: SQLite (sql.js)  →  %APPDATA%\lumen-world-trends\lumen.db
 ```
 
-单向流水线：`采集 → 标准化去重 → 图谱入库 → 趋势 → AI 解读 → IPC → 展示`
+单向流水线：`采集 → 标准化去重 → 图谱入库 → 趋势 → 因果链/AI 解读 → IPC → 展示`
 
 ## 技术栈
 
@@ -70,7 +72,7 @@ npm run build
 npm test
 ```
 
-> 提示：国内网络下载 Electron 二进制如果不畅，可先设置镜像镜像源：
+> 提示：国内网络下载 Electron 二进制如果不畅，可先设置镜像源：
 > ```powershell
 > $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 > npm install
@@ -89,10 +91,11 @@ npm test
 - **时间线**：事件按时间倒序回放，含关联文章（`timeline:replay`）
 - **图谱**：实体节点 + 共现边 + 可开关的事件节点（`graph:query`）
 - **解读**：AI 因果解读 / 周报生成 + 历史记录（`insights:generate` / `insights:weekly` / `insights:list`）
+  - **因果链**：输入实体名（如 China / 关税）生成事件链，可开/关 AI 断言，历史可回看（`causality:generate` / `causality:list` / `causality:chain`）
 
 ## 启用真实 AI（火山方舟 ARK）
 
-默认无 `ARK_API_KEY` 时走 **Mock**（离线兜底，返回占位解读）。配置真实 ARK：
+默认无 `ARK_API_KEY` 时走 **Mock**（离线兜底，返回占位解读/规则因果链）。配置真实 ARK：
 
 ```powershell
 # PowerShell
@@ -138,6 +141,7 @@ lumen/
     extract/             # 实体词典 (gazetteer)
     graph/               # 聚类 / 关系 / 图谱仓储 / buildGraph
     trends/              # 趋势引擎 / 热力 / 实体时序
+    causal/              # 因果链构建 (规则) + AI 断言解析 + 仓储
     world/               # 国家详情 / 多国对比（countries:*）
     ai/                  # provider(ARK/Mock) + 解读器
     dash/                # 总览汇总（dashboard:today）
@@ -158,7 +162,7 @@ lumen/
 ## 测试
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
-- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、检索。
+- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、检索。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -167,11 +171,12 @@ lumen/
 - **世界热力地图**：已实现 choropleth（110m 粒度）；大洲/更细行政区可换用 50m GeoJSON 重生成（`scripts/gen-world-geo.mjs`）。
 - **实体识别**：当前为词典 + 句法匹配；可升级为本地 NLP 或交给 AI 做更细抽取与上下位关系。
 - **图谱**：关系类型 v1 仅 `co-occurrence`；真正的因果/包含关系交给 AI 解读阶段。
+- **因果链**：v1 基于共享实体的时间相邻锚点，AI 断言可选；可进一步做跨链合并/反事实推演。
 - **AI**：解读聚焦最热话题（≤400 字）；可按需扩展周报/月报样式与模型切换。
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series`。
 
 ## 授权说明
 

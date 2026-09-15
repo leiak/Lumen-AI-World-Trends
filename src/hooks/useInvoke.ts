@@ -15,18 +15,25 @@ export function useInvoke<T>(channel: string) {
     async (payload?: unknown) => {
       setLoading(true);
       setError(undefined);
+      let res: Envelope<T> | undefined;
       try {
-        const res = (await window.lumen.invoke(channel, payload)) as Envelope<T> | undefined;
+        res = (await window.lumen.invoke(channel, payload)) as Envelope<T> | undefined;
         if (res && res.ok) setData(res.data);
         else setError(res?.error ?? `${channel} 调用失败`);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        return undefined;
       } finally {
         setLoading(false);
       }
+      return res;
     },
     [channel]
   );
 
   return { data, error, loading, run };
 }
+
+
+
+

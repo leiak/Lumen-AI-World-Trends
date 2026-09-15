@@ -21,6 +21,9 @@ import { createProvider } from './ai/provider.js';
 import { startScheduler, resolveIntervalMs } from './scheduler.js'
 import { loadDashboardSnapshot } from './dash/summary.js';
 import { countryDetail, countrySeries } from './world/detail.js';
+import { buildCausalChain } from './causal/build.js';
+import { interpretCausalChain } from './causal/interpret.js';
+import { saveCausalChain, listCausalChains, getCausalChain } from './causal/repository.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -169,6 +172,40 @@ void app.whenReady().then(async () => {
             : []
           : [];
       return { ok: true, data: countrySeries(getDb(), names) };
+    },
+    runCausalityList: async (payload) => {
+      const limit =
+        typeof payload === 'object' && payload
+          ? Number((payload as { limit?: number }).limit) || 50
+          : 50;
+      return { ok: true, data: listCausalChains(getDb(), limit) };
+    },
+    runCausalityGenerate: async (payload) => {
+      const p = (payload ?? {}) as { name?: string; maxEvents?: number; useAi?: boolean };
+      const name = String(p.name ?? '').trim();
+      if (!name) return { ok: false, error: 'missing entity name' };
+      const maxEvents = Number(p.maxEvents) || 5;
+      const useAi = p.useAi !== false;
+      const rule = buildCausalChain(getDb(), name, { maxEvents });
+      if (!rule) return { ok: false, error: `no causal chain for "${name}"` };
+      let chain = rule;
+      if (useAi) {
+        try {
+          chain = await interpretCausalChain(provider, rule);
+        } catch (e) {
+          console.warn('[lumen] causal AI failed, keep rule chain', e);
+        }
+      }
+      saveCausalChain(getDb(), chain);
+      persist();
+      return { ok: true, data: chain };
+    },
+    runCausalityChain: async (payload) => {
+      const id =
+        typeof payload === 'object' && payload
+          ? String((payload as { id?: string }).id ?? '')
+          : '';
+      return { ok: true, data: id ? getCausalChain(getDb(), id) : null };
     }
   });
 

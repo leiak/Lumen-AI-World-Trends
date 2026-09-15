@@ -42,7 +42,7 @@ describe('insight 仓储', () => {
     const v = (stmt.getAsObject() as { value: string }).value;
     stmt.free();
     db.close();
-    expect(v).toBe('5');
+    expect(v).toBe('6');
   });
 });
 

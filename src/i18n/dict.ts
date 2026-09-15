@@ -75,7 +75,22 @@ const zhDict = {
   'search.hint': '检索本地缓存的已爬取文章（支持中英文关键词）。',
   'search.placeholder': '输入关键词，如 China / 关税',
   'search.button': '搜索',
-  'search.empty': '暂无结果。先搜一搜，或到「总览」采集文章。'
+  'search.empty': '暂无结果。先搜一搜，或到「总览」采集文章。',
+  'insights.causal.title': '因果链',
+  'insights.causal.hint': '输入实体名，把该实体相关事件按时间串成因果链；开启 AI 会自动补一句因果断言。',
+  'insights.causal.placeholder': '实体名，如 China / 关税',
+  'insights.causal.gen': '生成因果链',
+  'insights.causal.aiOn': 'AI 断言: 开',
+  'insights.causal.aiOff': 'AI 断言: 关',
+  'insights.causal.empty': '输入实体名后点「生成因果链」；事件不足时无法成链。',
+  'insights.causal.nodes': '{a} 个事件',
+  'insights.causal.links': '{a} 条链路',
+  'insights.causal.anchor': '锚点 {a}',
+  'insights.causal.kind.rule': '规则',
+  'insights.causal.kind.ai': 'AI 断言',
+  'insights.causal.summary': '因果摘要',
+  'insights.causal.history': '历史因果链（本地缓存）',
+  'insights.causal.historyEmpty': '暂无因果链。生成一条试试。'
 } as const;
 
 export type I18nKey = keyof typeof zhDict;
@@ -156,7 +171,22 @@ const enDict: Record<I18nKey, string> = {
   'search.hint': 'Search cached articles (supports Chinese & English keywords).',
   'search.placeholder': 'Type a keyword, e.g. China / tariffs',
   'search.button': 'Search',
-  'search.empty': 'No results. Try searching, or crawl articles in Overview first.'
+  'search.empty': 'No results. Try searching, or crawl articles in Overview first.',
+  'insights.causal.title': 'Causal chains',
+  'insights.causal.hint': 'Type an entity to chain its related events by time; enable AI to add a causal assertion per link.',
+  'insights.causal.placeholder': 'Entity name, e.g. China / tariffs',
+  'insights.causal.gen': 'Generate chain',
+  'insights.causal.aiOn': 'AI: on',
+  'insights.causal.aiOff': 'AI: off',
+  'insights.causal.empty': 'Enter an entity and generate; not enough events returns nothing.',
+  'insights.causal.nodes': '{a} nodes',
+  'insights.causal.links': '{a} links',
+  'insights.causal.anchor': 'anchor {a}',
+  'insights.causal.kind.rule': 'rule',
+  'insights.causal.kind.ai': 'AI',
+  'insights.causal.summary': 'Causal summary',
+  'insights.causal.history': 'History (cached locally)',
+  'insights.causal.historyEmpty': 'No causal chains yet. Generate one.'
 };
 
 export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
@@ -168,3 +198,5 @@ export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
 }
 export const ZH_DICT = zhDict;
 export const EN_DICT = enDict;
+
+
