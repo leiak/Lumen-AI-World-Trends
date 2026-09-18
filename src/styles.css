@@ -143,6 +143,8 @@ body {
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { background: var(--bg-hover); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; font-size: 13px; color: var(--text); }
 .chip .n { color: var(--accent-2); font-weight: 700; margin-left: 5px; }
+.chip .n.gain { color: var(--accent); }
+.chip .n.loss { color: var(--ok); }
 
 /* 世界地图按日回放 */
 .player { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 14px; }

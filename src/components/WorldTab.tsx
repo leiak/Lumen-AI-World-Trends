@@ -5,8 +5,10 @@ import { useI18n } from '../i18n/I18n';
 import EChart from './EChart';
 import { worldGeo, normalizeCountry, countriesToMapData } from '../world/geo';
 import { aggregateRegions, regionOfCountry } from '../world/regions';
+import { MARKET_INDEX_SYMBOLS } from '../../shared/stocks';
 import type { TrendsResult } from '../../shared/trend';
 import type { CountryDetail, CountrySeriesResult, WorldTimeline } from '../../shared/world';
+import type { StocksView } from '../../shared/stocks';
 
 echarts.registerMap('world', worldGeo as unknown as Parameters<typeof echarts.registerMap>[1]);
 
@@ -16,6 +18,7 @@ export default function WorldTab() {
   const detail = useInvoke<CountryDetail>('countries:detail');
   const series = useInvoke<CountrySeriesResult>('countries:series');
   const timeline = useInvoke<WorldTimeline>('world:timeline');
+  const market = useInvoke<StocksView>('stocks:list');
   const [selected, setSelected] = useState<string[]>([]);
   const [detailName, setDetailName] = useState<string | null>(null);
   const [replay, setReplay] = useState(false);
@@ -26,6 +29,7 @@ export default function WorldTab() {
   useEffect(() => {
     void list.run();
     void timeline.run({ days: 14 });
+    void market.run();
   }, []);
 
   useEffect(() => {
@@ -107,6 +111,28 @@ export default function WorldTab() {
         <h2>{t('world.title')}</h2>
         <p className="muted">{t('world.hint')}</p>
         <button className="btn primary" onClick={() => void list.run()}>{t('common.refresh')}</button>
+      </div>
+
+      <div className="card">
+        <h3>{t('world.market.title')}</h3>
+        {market.data?.quotes.length ? (
+          <div className="chips" style={{ marginTop: 8 }}>
+            {MARKET_INDEX_SYMBOLS.map((sym) => {
+              const q = market.data!.quotes.find((x) => x.symbol === sym);
+              if (!q) return null;
+              const pct = q.changePct;
+              const cls = pct === 0 ? '' : pct > 0 ? 'gain' : 'loss';
+              return (
+                <span className="chip" key={sym}>
+                  {q.name}
+                  <span className={`n ${cls}`}>{pct > 0 ? '+' : ''}{pct.toFixed(2)}%</span>
+                </span>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="muted">{t('world.market.empty')}</p>
+        )}
       </div>
 
       <div className="card">

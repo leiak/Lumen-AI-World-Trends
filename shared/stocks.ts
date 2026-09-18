@@ -45,3 +45,15 @@ export interface StocksWatchView {
 }
 
 export type KlinePeriod = 'day' | 'week' | 'month';
+
+export const MARKET_INDEX_SYMBOLS = [
+  'sh000001',
+  'sh000300',
+  'sz399001',
+  'sz399006',
+  'hkHSI',
+  'hkHSCEI',
+  'usDJI',
+  'usIXIC',
+  'usINX'
+] as const;
