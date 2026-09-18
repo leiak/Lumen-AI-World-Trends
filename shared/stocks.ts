@@ -33,3 +33,15 @@ export interface StockHistoryResult {
   points: StockKPoint[];
   note?: string;
 }
+
+export interface StockWatchItem {
+  symbol: string;
+  name: string;
+  market: string;
+}
+
+export interface StocksWatchView {
+  items: StockWatchItem[];
+}
+
+export type KlinePeriod = 'day' | 'week' | 'month';

@@ -60,6 +60,17 @@ describe('Tencent 行情解析', () => {
     const dayOnly = { data: { hk00700: { day: [['2026-08-01', '300', '310', '315', '295', '999']] } } };
     expect(parseKlineResponse(dayOnly as never, 'hk00700')).toHaveLength(1);
   });
+
+  it('解析周/月 K 线（qfqweek / qfqmonth）', () => {
+    const week = { data: { hk00700: { qfqweek: [['2026-08-07', '300', '310', '315', '295', '999']] } } };
+    expect(parseKlineResponse(week as never, 'hk00700', 'week')).toHaveLength(1);
+    expect(parseKlineResponse(week as never, 'hk00700', 'week')[0]).toMatchObject({
+      date: '2026-08-07', close: 310, volume: 999
+    });
+    const month = { data: { hk00700: { qfqmonth: [['2026-07-31', '280', '290', '300', '270', '500']] } } };
+    expect(parseKlineResponse(month as never, 'hk00700', 'month')).toHaveLength(1);
+    expect(parseKlineResponse(week as never, 'hk00700')).toHaveLength(0);
+  });
 });
 
 describe('Mock 行情源', () => {

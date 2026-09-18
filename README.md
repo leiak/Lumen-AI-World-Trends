@@ -25,7 +25,7 @@
 - **世界热力地图**：世界 GeoJSON choropleth（110m），国家热度着色、可缩放拖动，点击区域联动国家详情/对比。
 - **世界按日回放**：把最近 14 天按「每篇文章的日期」拆成日级热度，地图可播放/暂停/拖动时间轴回看世界热度的逐日演变。
 - **大洲聚合视图**：世界 Tab 「国家 / 大洲」双维度一键切换；大洲模式地图按所在洲总热度着色、榜单改显洲级热度，回放同样支持洲级逐日演变（`src/world/regions.ts`，8 洲静态映射，零依赖）。
-- **股票行情 Tab**：内置指数/A股/港股/美股约 33 个标的（腾讯公开行情 qt.gtimg.cn 实时报价 + ifzq.gtimg.cn 日 K，无需 API Key），报价表 + ECharts K 线（红涨绿跌、可缩放），读写本地缓存离线可看上次行情。
+- **股票行情 Tab**：指数/A股/港股/美股约 33 个内置标的 + **自选股可增删**（输入市场前缀代码，如 `usAAPL`/`hk00700`，添加前经行情接口校验；腾讯公开行情 qt.gtimg.cn + ifzq.gtimg.cn，无需 API Key），报价表 + ECharts K 线（**日K/周K/月K**、红涨绿跌、可缩放），**每 5 分钟自动刷新**（`STOCK_REFRESH_MINUTES` 可调）与本地缓存离线可看上次行情。
 - **本地缓存**：SQLite 落盘（`sql.js`），采集/建图/解读后与退出前自动持久化，离线可回看/检索。
 - **无服务端**：主进程 Node 完成采集/图谱/趋势/AI，渲染层仅展示；二者只走 Electron IPC，不监听任何端口。
 - **采集策略（UI 可配）**：总览 Tab 可勾选启用的新闻源、开关自动调度、调间隔（1-720 分钟），保存后即时生效并落库持久化（`settings:get` / `settings:update`）。
@@ -96,7 +96,7 @@ npm test
   - `构建图谱`：对最新文章抽实体/聚类/建边（`graph:build`）
 - **趋势**：top 话题热度折线（`topics:list`）
 - **世界**：国家热点榜单 + 点击查看国家详情（关联话题/文章）+ 2-4 国热度对比折线 + 地图**按日回放**（播放/暂停/滑块）+ **国家/大洲双维度**（大洲模式地图按洲着色、榜单显洲级热度；`countries:detail` / `countries:series` / `world:timeline`）
-- **股票**：指数/A股/港股/美股报价表（名称/代码/最新价/涨跌/涨跌幅，红涨绿跌）+ 点击行看近 60 日 K 线（成交量副图、可缩放），带「刷新行情」与本地缓存（`stocks:list` / `stocks:refresh` / `stocks:history`）
+- **股票**：自选股报价表（名称/代码/最新价/涨跌/涨跌幅，红涨绿跌；可添加/移除代码，`stocks:watch` / `stocks:add` / `stocks:remove`）+ 点击行看 K 线（**日K/周K/月K** 切换 + 成交量副图 + 缩放，`stocks:history`），带「刷新行情」、5 分钟自动刷新与本地缓存（`stocks:list` / `stocks:refresh`）
 - **检索**：本地全文搜索已抓文章（`search:fulltext`）
 - **时间线**：事件按时间倒序回放，含关联文章（`timeline:replay`）
 - **图谱**：实体节点 + 共现边 + 可开关的事件节点（`graph:query`）
@@ -143,6 +143,7 @@ npm run dev
 
 - `LUMEN_SMOKE=1`：自动加载后打印引擎状态并退出（冒烟自检）
 - `LUMEN_INTERVAL_MINUTES`：自动调度间隔兜底值（分钟，默认 30；已在 UI「采集策略」配置后以 UI 为准）
+- `STOCK_REFRESH_MINUTES`：股票行情自动刷新间隔（分钟，默认 5）
 - `LUMEN_DEBUG=1`：打印渲染层 DOM/console 便于排查白屏
 
 ## 项目结构
@@ -158,7 +159,7 @@ lumen/
     export/              # 快照导出 (Markdown/JSON)
     world/               # 国家详情 / 多国对比 / 按日回放时间线（countries:* / world:timeline）
     stocks/              # 行情 watchlist / 腾讯&Mock provider（stocks:*）
-    db/                  # sql.js 连接 / 迁移 / 持久化 + 股票缓存
+    db/                  # sql.js 连接 / 迁移 / 持久化 + 股票缓存/自选股
     ai/                  # provider(ARK/Mock) + 解读器
     dash/                # 总览汇总（dashboard:today）
     db/                  # sql.js 连接 / 迁移 / 持久化
@@ -178,7 +179,7 @@ lumen/
 ## 测试
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
-- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、世界按日时间线、大洲聚合映射、股票解析/缓存（fixture+Mock，不发网络）、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、跨链合并/全局叙事、叙事 AI 摘要/反事实推演、采集策略设置（持久化/过滤/钳制）、快照导出（Markdown/JSON）、检索。
+- `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、世界按日时间线、大洲聚合映射、股票解析/缓存/自选股（fixture+Mock，不发网络）、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、跨链合并/全局叙事、叙事 AI 摘要/反事实推演、采集策略设置（持久化/过滤/钳制）、快照导出（Markdown/JSON）、检索。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -189,12 +190,12 @@ lumen/
 - **图谱**：关系类型 v1 仅 `co-occurrence`；真正的因果/包含关系交给 AI 解读阶段。
 - **因果链**：v1 基于共享实体的时间相邻锚点，AI 断言可选；v2 支持跨实体合并成全局叙事 + AI 摘要 + 反事实推演；下一步可做时序因果/影响量化。
 - **导出快照**：v1 为 Markdown/JSON 全文导出；可扩展为图表 PNG、订阅式自动归档。
-- **股票行情**：行情来自腾讯公开接口（第三方免费源，可能限流/变更）；自选股列表当前内置在 `electron/main/stocks/watchlist.ts`，下一步可接 UI 自选股管理与定时刷新、周/月 K、财务指标。
+- **股票行情**：行情来自腾讯公开接口（第三方免费源，可能限流/变更）；已支持自选股增删、日/周/月 K 与 5 分钟自动刷新；下一步可做自选分组/排序、财务指标、涨跌幅排序与预警。
 - **AI**：解读聚焦最热话题（≤400 字）；可按需扩展周报/月报样式与模型切换。
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series` `world:timeline` `stocks:list` `stocks:refresh` `stocks:history`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series` `world:timeline` `stocks:list` `stocks:refresh` `stocks:history` `stocks:watch` `stocks:add` `stocks:remove`。
 
 ## 授权说明
 

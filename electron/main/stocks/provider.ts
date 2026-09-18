@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { StockKPoint, StockQuote } from '../../../shared/stocks.js';
+import type { KlinePeriod, StockKPoint, StockQuote } from '../../../shared/stocks.js';
 
 const QUOTE_ENDPOINT = 'https://qt.gtimg.cn/q=';
 const KLINE_ENDPOINT = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get';
@@ -49,11 +49,15 @@ export function parseQuoteLine(line: string): StockQuote | null {
   };
 }
 
-export function parseKlineResponse(payload: unknown, symbol: string): StockKPoint[] {
+export function parseKlineResponse(
+  payload: unknown,
+  symbol: string,
+  period: KlinePeriod = 'day'
+): StockKPoint[] {
   const entry = (payload as {
-    data?: Record<string, { qfqday?: string[][]; day?: string[][] }>;
+    data?: Record<string, Record<string, string[][] | undefined>>;
   })?.data?.[symbol];
-  const rows = entry?.qfqday ?? entry?.day ?? [];
+  const rows = entry?.[`qfq${period}`] ?? entry?.[period] ?? [];
   return rows
     .map((r) => ({
       date: String(r[0] ?? ''),
@@ -68,7 +72,7 @@ export function parseKlineResponse(payload: unknown, symbol: string): StockKPoin
 
 export interface StockProvider {
   fetchQuotes(symbols: string[]): Promise<StockQuote[]>;
-  fetchKline(symbol: string, days?: number): Promise<StockKPoint[]>;
+  fetchKline(symbol: string, days?: number, period?: KlinePeriod): Promise<StockKPoint[]>;
 }
 
 export class TencentStockProvider implements StockProvider {
@@ -91,11 +95,11 @@ export class TencentStockProvider implements StockProvider {
     return quotes;
   }
 
-  async fetchKline(symbol: string, days = 60): Promise<StockKPoint[]> {
+  async fetchKline(symbol: string, days = 60, period: KlinePeriod = 'day'): Promise<StockKPoint[]> {
     const res = await this.http.get(KLINE_ENDPOINT, {
-      params: { param: `${symbol},day,,,${days},qfq` }
+      params: { param: `${symbol},${period},,,${days},qfq` }
     });
-    return parseKlineResponse(res.data, symbol);
+    return parseKlineResponse(res.data, symbol, period);
   }
 }
 
@@ -126,13 +130,15 @@ export class MockStockProvider implements StockProvider {
     });
   }
 
-  async fetchKline(symbol: string, days = 60): Promise<StockKPoint[]> {
+  async fetchKline(symbol: string, days = 60, period: KlinePeriod = 'day'): Promise<StockKPoint[]> {
     const base = this.base(symbol);
     const start = new Date(Date.UTC(2026, 6, 1));
     const out: StockKPoint[] = [];
     for (let i = 0; i < days; i++) {
       const d = new Date(start);
-      d.setUTCDate(start.getUTCDate() + i);
+      if (period === 'week') d.setUTCDate(start.getUTCDate() + i * 7);
+      else if (period === 'month') d.setUTCDate(start.getUTCDate() + i * 30);
+      else d.setUTCDate(start.getUTCDate() + i);
       const close = base + Math.sin(i / 3) * 10;
       out.push({
         date: d.toISOString().slice(0, 10),

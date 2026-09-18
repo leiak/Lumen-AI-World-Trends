@@ -1,5 +1,6 @@
 import type { Database } from 'sql.js';
-import type { StockKPoint, StockQuote } from '../../../shared/stocks.js';
+import type { KlinePeriod, StockKPoint, StockQuote, StockWatchItem } from '../../../shared/stocks.js';
+import type { StockWatchItem as WatchItemSource } from '../stocks/watchlist.js';
 
 export function saveQuotes(db: Database, quotes: StockQuote[]): void {
   const stmt = db.prepare(`
@@ -63,24 +64,34 @@ export function latestCacheTime(db: Database): string {
   return t;
 }
 
-export function saveKline(db: Database, symbol: string, points: StockKPoint[]): void {
+export function saveKline(
+  db: Database,
+  symbol: string,
+  period: KlinePeriod,
+  points: StockKPoint[]
+): void {
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO stock_kline (symbol, date, open, close, high, low, volume)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO stock_kline (symbol, period, date, open, close, high, low, volume)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const p of points) {
-    stmt.run([symbol, p.date, p.open, p.close, p.high, p.low, p.volume]);
+    stmt.run([symbol, period, p.date, p.open, p.close, p.high, p.low, p.volume]);
   }
   stmt.free();
 }
 
-export function loadKline(db: Database, symbol: string, limit?: number): StockKPoint[] {
+export function loadKline(
+  db: Database,
+  symbol: string,
+  period: KlinePeriod,
+  limit?: number
+): StockKPoint[] {
   const sql =
     limit && limit > 0
-      ? 'SELECT * FROM stock_kline WHERE symbol = ? ORDER BY date DESC LIMIT ?'
-      : 'SELECT * FROM stock_kline WHERE symbol = ? ORDER BY date';
+      ? 'SELECT * FROM stock_kline WHERE symbol = ? AND period = ? ORDER BY date DESC LIMIT ?'
+      : 'SELECT * FROM stock_kline WHERE symbol = ? AND period = ? ORDER BY date';
   const stmt = db.prepare(sql);
-  stmt.bind(limit && limit > 0 ? [symbol, limit] : [symbol]);
+  stmt.bind(limit && limit > 0 ? [symbol, period, limit] : [symbol, period]);
   const rows: StockKPoint[] = [];
   while (stmt.step()) {
     const r = stmt.getAsObject() as unknown as Record<string, unknown>;
@@ -95,4 +106,44 @@ export function loadKline(db: Database, symbol: string, limit?: number): StockKP
   }
   stmt.free();
   return rows.reverse();
+}
+
+export function seedDefaultWatch(db: Database, items: WatchItemSource[]): number {
+  const stmt = db.prepare(
+    'INSERT OR IGNORE INTO stock_watch (symbol, name, market, sort) VALUES (?, ?, ?, ?)'
+  );
+  let n = 0;
+  items.forEach((w, i) => {
+    stmt.run([w.symbol, w.name, w.market, i]);
+    if (db.getRowsModified() > 0) n++;
+  });
+  stmt.free();
+  return n;
+}
+
+export function loadWatch(db: Database): StockWatchItem[] {
+  const out: StockWatchItem[] = [];
+  const stmt = db.prepare('SELECT symbol, name, market FROM stock_watch ORDER BY sort, rowid');
+  while (stmt.step()) {
+    const r = stmt.getAsObject() as unknown as { symbol: string; name: string; market: string };
+    out.push({ symbol: r.symbol, name: r.name, market: r.market });
+  }
+  stmt.free();
+  return out;
+}
+
+export function addWatch(db: Database, item: StockWatchItem): void {
+  const sortStmt = db.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS s FROM stock_watch');
+  sortStmt.step();
+  const sort = Number((sortStmt.getAsObject() as unknown as { s: number }).s) || 0;
+  sortStmt.free();
+  const stmt = db.prepare(
+    'INSERT OR REPLACE INTO stock_watch (symbol, name, market, sort) VALUES (?, ?, ?, ?)'
+  );
+  stmt.run([item.symbol, item.name, item.market, sort]);
+  stmt.free();
+}
+
+export function removeWatch(db: Database, symbol: string): void {
+  db.run('DELETE FROM stock_watch WHERE symbol = ?', [symbol]);
 }

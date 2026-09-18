@@ -161,6 +161,10 @@ body {
 .gain { color: var(--accent); }
 .loss { color: var(--ok); }
 .warn { color: var(--accent-2); }
+.watch-add { display: flex; align-items: center; gap: 8px; margin: 2px 0 4px; }
+.watch-input { width: 220px; }
+.sym-cell { cursor: pointer; }
+.btn.tiny { padding: 2px 8px; margin: 0; font-size: 12px; line-height: 1.4; }
 .chip .up { color: var(--ok); margin-left: 4px; }
 .chip .down { color: #f85149; margin-left: 4px; }
 

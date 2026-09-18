@@ -22,7 +22,10 @@ export const ALL_CHANNELS = [
   'export:snapshot',
   'stocks:list',
   'stocks:refresh',
-  'stocks:history'
+  'stocks:history',
+  'stocks:watch',
+  'stocks:add',
+  'stocks:remove'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

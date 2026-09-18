@@ -124,6 +124,28 @@ CREATE TABLE IF NOT EXISTS stock_kline (
 CREATE INDEX IF NOT EXISTS idx_kline_symbol ON stock_kline(symbol);
 `;
 
+const MIGRATION_8 = `
+DROP TABLE IF EXISTS stock_kline;
+CREATE TABLE stock_kline (
+  symbol TEXT NOT NULL,
+  period TEXT NOT NULL DEFAULT 'day',
+  date TEXT NOT NULL,
+  open REAL NOT NULL DEFAULT 0,
+  close REAL NOT NULL DEFAULT 0,
+  high REAL NOT NULL DEFAULT 0,
+  low REAL NOT NULL DEFAULT 0,
+  volume REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (symbol, period, date)
+);
+CREATE INDEX IF NOT EXISTS idx_kline_symbol_period ON stock_kline(symbol, period);
+CREATE TABLE IF NOT EXISTS stock_watch (
+  symbol TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  market TEXT NOT NULL DEFAULT 'cn',
+  sort INTEGER NOT NULL DEFAULT 0
+);
+`;
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
@@ -132,9 +154,10 @@ export function migrate(db: Database): void {
   db.exec(MIGRATION_5);
   db.exec(MIGRATION_6);
   db.exec(MIGRATION_7);
+  db.exec(MIGRATION_8);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '7');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '8');`
   );
 }
 

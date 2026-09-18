@@ -31,7 +31,17 @@ import { loadCollectSettings, saveCollectSettings, enabledCollectors } from './d
 import { buildMarkdownSnapshot, buildJsonSnapshot, type ExportSnapshotInput } from './export/snapshot.js';
 import { DEFAULT_WATCHLIST } from './stocks/watchlist.js';
 import { createStockProvider } from './stocks/provider.js';
-import { saveQuotes, loadQuotes, saveKline, loadKline, latestCacheTime } from './db/stocks.js';
+import {
+  saveQuotes,
+  loadQuotes,
+  saveKline,
+  loadKline,
+  latestCacheTime,
+  loadWatch,
+  addWatch,
+  removeWatch,
+  seedDefaultWatch
+} from './db/stocks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -87,6 +97,7 @@ void app.whenReady().then(async () => {
     ready = false;
     console.error('[lumen] database init failed', err);
   }
+  seedDefaultWatch(getDb(), DEFAULT_WATCHLIST);
 
   const persist = (): void => {
     try {
@@ -99,6 +110,28 @@ void app.whenReady().then(async () => {
   const intervalMs = resolveIntervalMs(process.env);
 
   const provider = createProvider(process.env);
+
+  const stockNameMap = (): Map<string, string> => {
+    const m = new Map<string, string>();
+    for (const w of loadWatch(getDb())) m.set(w.symbol, w.name);
+    for (const w of DEFAULT_WATCHLIST) if (!m.has(w.symbol)) m.set(w.symbol, w.name);
+    return m;
+  };
+
+  const refreshStockQuotes = async (): Promise<void> => {
+    const watch = loadWatch(getDb());
+    const symbols =
+      watch.length > 0 ? watch.map((w) => w.symbol) : DEFAULT_WATCHLIST.map((w) => w.symbol);
+    const quotes = await stockProvider.fetchQuotes(symbols);
+    if (quotes.length === 0) return;
+    const names = stockNameMap();
+    const merged = quotes.map((q) => {
+      const name = names.get(q.symbol);
+      return name ? { ...q, name } : q;
+    });
+    saveQuotes(getDb(), merged);
+    persist();
+  };
 
   registerIpc({
     getStatus: () => getEngineStatus(ready, dbPath, enabledCollectors(getDb(), REAL_SOURCES).map((s) => s.id)),
@@ -320,15 +353,7 @@ void app.whenReady().then(async () => {
     runStocksRefresh: async () => {
       const db = getDb();
       try {
-        const quotes = await stockProvider.fetchQuotes(DEFAULT_WATCHLIST.map((w) => w.symbol));
-        const merged = quotes.map((q) => {
-          const known = DEFAULT_WATCHLIST.find(
-            (w) => w.symbol.toLowerCase() === q.symbol.toLowerCase()
-          );
-          return known ? { ...q, name: known.name } : q;
-        });
-        saveQuotes(db, merged);
-        persist();
+        await refreshStockQuotes();
         return { ok: true, data: { updatedAt: latestCacheTime(db), quotes: loadQuotes(db) } };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -340,22 +365,58 @@ void app.whenReady().then(async () => {
       }
     },
     runStocksHistory: async (payload) => {
-      const p = (payload ?? {}) as { symbol?: string };
+      const p = (payload ?? {}) as { symbol?: string; period?: string };
       const symbol = String(p.symbol ?? '').trim();
       if (!symbol) return { ok: false, error: 'missing symbol' };
       const db = getDb();
-      const cached = loadKline(db, symbol);
+      const period = p.period === 'week' || p.period === 'month' ? p.period : 'day';
+      const cached = loadKline(db, symbol, period);
       if (cached.length > 0) return { ok: true, data: { symbol, points: cached } };
       try {
-        const points = await stockProvider.fetchKline(symbol, 60);
+        const days = period === 'week' ? 60 : period === 'month' ? 36 : 60;
+        const points = await stockProvider.fetchKline(symbol, days, period);
         if (points.length > 0) {
-          saveKline(db, symbol, points);
+          saveKline(db, symbol, period, points);
           persist();
         }
         return { ok: true, data: { symbol, points } };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
+    },
+    runStocksWatch: async () => ({
+      ok: true,
+      data: { items: loadWatch(getDb()) }
+    }),
+    runStocksAdd: async (payload) => {
+      const p = (payload ?? {}) as { symbol?: string };
+      const symbol = String(p.symbol ?? '').trim().toLowerCase();
+      if (!symbol) return { ok: false, error: 'missing symbol' };
+      const db = getDb();
+      const existing = loadWatch(db);
+      if (existing.some((w) => w.symbol === symbol)) {
+        return { ok: true, data: { items: existing } };
+      }
+      try {
+        const [quote] = await stockProvider.fetchQuotes([symbol]);
+        if (!quote) {
+          return { ok: false, error: `unsupported or invalid symbol: ${symbol}` };
+        }
+        const market = symbol.startsWith('hk') ? 'hk' : symbol.startsWith('us') ? 'us' : 'cn';
+        addWatch(db, { symbol, name: quote.name, market });
+        persist();
+        return { ok: true, data: { items: loadWatch(db) } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksRemove: async (payload) => {
+      const p = (payload ?? {}) as { symbol?: string };
+      const symbol = String(p.symbol ?? '').trim();
+      if (!symbol) return { ok: false, error: 'missing symbol' };
+      removeWatch(getDb(), symbol);
+      persist();
+      return { ok: true, data: { items: loadWatch(getDb()) } };
     }
   });
 
@@ -384,6 +445,12 @@ void app.whenReady().then(async () => {
   };
 
   restartScheduler();
+
+  const stockIntervalMs = Math.max(1, Number(process.env.STOCK_REFRESH_MINUTES) || 5) * 60000;
+  const stockTimer = setInterval(() => {
+    refreshStockQuotes().catch((e) => console.warn('[lumen] stock auto refresh failed', e));
+  }, stockIntervalMs);
+  app.on('will-quit', () => clearInterval(stockTimer));
 
   createWindow();
   app.on('before-quit', () => persist());

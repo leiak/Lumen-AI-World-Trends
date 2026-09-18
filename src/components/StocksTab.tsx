@@ -3,7 +3,14 @@ import * as echarts from 'echarts';
 import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
 import EChart from './EChart';
-import type { StocksView, StockHistoryResult } from '../../shared/stocks';
+import type {
+  KlinePeriod,
+  StocksView,
+  StocksWatchView,
+  StockHistoryResult
+} from '../../shared/stocks';
+
+const PERIODS: KlinePeriod[] = ['day', 'week', 'month'];
 
 function fmtPrice(n: number): string {
   if (n >= 1000) return n.toFixed(0);
@@ -26,10 +33,16 @@ export default function StocksTab() {
   const view = useInvoke<StocksView>('stocks:list');
   const refresh = useInvoke<StocksView>('stocks:refresh');
   const hist = useInvoke<StockHistoryResult>('stocks:history');
+  const watch = useInvoke<StocksWatchView>('stocks:watch');
+  const add = useInvoke<StocksWatchView>('stocks:add');
+  const remove = useInvoke<StocksWatchView>('stocks:remove');
   const [selected, setSelected] = useState<string | null>(null);
+  const [period, setPeriod] = useState<KlinePeriod>('day');
+  const [addInput, setAddInput] = useState('');
 
   useEffect(() => {
     void view.run();
+    void watch.run();
   }, []);
 
   useEffect(() => {
@@ -39,16 +52,44 @@ export default function StocksTab() {
   }, [view.loading, view.data, view.error]);
 
   useEffect(() => {
-    if (selected) void hist.run({ symbol: selected });
-  }, [selected]);
+    const timer = setInterval(() => void view.run(), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (selected) void hist.run({ symbol: selected, period });
+  }, [selected, period]);
 
   const fresh = refresh.data ?? view.data;
   const quotes = fresh?.quotes ?? [];
   const note = fresh?.note;
   const updatedAt = refresh.data?.updatedAt || view.data?.updatedAt || '';
+  const quoteBySymbol = new Map(quotes.map((q) => [q.symbol, q]));
+  const watchItems = watch.data?.items ?? [];
+  const rows = watchItems.map((w) => ({ ...w, quote: quoteBySymbol.get(w.symbol) }));
 
   function onRefresh() {
     void refresh.run();
+  }
+
+  async function onAdd() {
+    const symbol = addInput.trim();
+    if (!symbol) return;
+    const res = await add.run({ symbol });
+    if (res && res.ok) {
+      setAddInput('');
+      void watch.run();
+      void refresh.run();
+    }
+  }
+
+  async function onRemove(symbol: string) {
+    const res = await remove.run({ symbol });
+    if (res && res.ok) {
+      void watch.run();
+      void view.run();
+      if (selected === symbol) setSelected(null);
+    }
   }
 
   function buildKlineOption(): echarts.EChartsOption {
@@ -135,8 +176,27 @@ export default function StocksTab() {
           </button>
           {updatedAt && <span className="muted">{t('stocks.updated', { t: fmtTime(updatedAt) })}</span>}
         </div>
+        <p className="muted">{t('stocks.auto')}</p>
         {note && <p className="muted warn">{t('stocks.offline')}</p>}
-        {quotes.length === 0 ? (
+
+        <div className="watch-add">
+          <input
+            className="input watch-input"
+            value={addInput}
+            placeholder={t('stocks.addPlaceholder')}
+            onChange={(e) => setAddInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void onAdd();
+            }}
+          />
+          <button className="btn" onClick={() => void onAdd()} disabled={add.loading || !addInput.trim()}>
+            {t('stocks.add')}
+          </button>
+          {add.error && <span className="err">{t('stocks.addFail')}</span>}
+        </div>
+        <p className="muted" style={{ margin: '4px 0 10px' }}>{t('stocks.addHint')}</p>
+
+        {rows.length === 0 ? (
           <p className="muted">
             {refresh.error ? refresh.error : refresh.loading ? t('stocks.loading') : t('stocks.empty')}
           </p>
@@ -149,24 +209,34 @@ export default function StocksTab() {
                 <th>{t('stocks.price')}</th>
                 <th>{t('stocks.change')}</th>
                 <th>{t('stocks.pct')}</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {quotes.map((q) => {
-                const up = q.change > 0;
-                const flat = q.change === 0;
+              {rows.map(({ symbol, name, quote }) => {
+                const up = (quote?.change ?? 0) > 0;
+                const flat = (quote?.change ?? 0) === 0;
                 const cls = up ? 'gain' : flat ? '' : 'loss';
                 return (
-                  <tr
-                    key={q.symbol}
-                    className={selected === q.symbol ? 'sel' : ''}
-                    onClick={() => setSelected(q.symbol)}
-                  >
-                    <td>{q.name}</td>
-                    <td className="muted">{q.symbol}</td>
-                    <td className={cls}>{fmtPrice(q.price)}</td>
-                    <td className={cls}>{up ? '+' : ''}{q.change.toFixed(2)}</td>
-                    <td className={cls}>{up ? '+' : ''}{q.changePct.toFixed(2)}%</td>
+                  <tr key={symbol} className={selected === symbol ? 'sel' : ''}>
+                    <td className="sym-cell" onClick={() => setSelected(symbol)}>
+                      {name}
+                    </td>
+                    <td className="muted sym-cell" onClick={() => setSelected(symbol)}>
+                      {symbol}
+                    </td>
+                    <td className={cls}>{quote ? fmtPrice(quote.price) : '—'}</td>
+                    <td className={cls}>{quote ? `${up ? '+' : ''}${quote.change.toFixed(2)}` : '—'}</td>
+                    <td className={cls}>{quote ? `${up ? '+' : ''}${quote.changePct.toFixed(2)}%` : '—'}</td>
+                    <td>
+                      <button
+                        className="btn tiny"
+                        title={t('stocks.remove')}
+                        onClick={() => void onRemove(symbol)}
+                      >
+                        ✕
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -179,13 +249,28 @@ export default function StocksTab() {
       {selected && (
         <div className="card">
           <h3>{t('stocks.kline')}: {selected}</h3>
+          <div className="chips" style={{ margin: '4px 0 10px' }}>
+            {PERIODS.map((p) => (
+              <button
+                key={p}
+                className={`chip pick${period === p ? ' on' : ''}`}
+                onClick={() => setPeriod(p)}
+              >
+                {t(`stocks.period.${p}`)}
+              </button>
+            ))}
+          </div>
           {hist.loading ? (
             <p className="muted">{t('common.loading')}</p>
           ) : hist.error ? (
             <p className="err">{hist.error}</p>
           ) : hist.data?.points.length ? (
             <div className="chart-box tall">
-              <EChart height={460} deps={[hist.data, t]} buildOption={buildKlineOption} />
+              <EChart
+                height={460}
+                deps={[hist.data, period, t]}
+                buildOption={buildKlineOption}
+              />
             </div>
           ) : (
             <p className="muted">{t('stocks.empty')}</p>
