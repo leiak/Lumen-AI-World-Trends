@@ -10,6 +10,7 @@ import { runCrawl } from './db/persistence.js';
 import { saveInsight, listInsights } from './db/insights.js';
 import { createRssCollector } from './collectors/rss.js';
 import { REAL_SOURCES } from './collectors/registry.js';
+import { captureAllTabs } from './capture.js';
 import {
   searchArticles,
   listEvents,
@@ -78,6 +79,21 @@ function createWindow(): void {
           app.quit();
         }
       }, 1200);
+    });
+  }
+
+  if (process.env.LUMEN_CAPTURE === '1') {
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        captureAllTabs(win)
+          .then((files) => {
+            console.log('LUMEN_CAPTURE_DONE', files.join(','));
+          })
+          .catch((err) => {
+            console.error('LUMEN_CAPTURE_FAIL', String(err));
+          })
+          .finally(() => app.quit());
+      }, 1500);
     });
   }
 

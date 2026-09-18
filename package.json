@@ -10,7 +10,8 @@
     "dev:electron": "npm run build:main && wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
     "build": "tsc -p tsconfig.json && vite build && vite build --config electron/vite.config.ts && node scripts/copy-preload.mjs",
     "test": "vitest run",
-    "build:main": "vite build --config electron/vite.config.ts && node scripts/copy-preload.mjs"
+    "build:main": "vite build --config electron/vite.config.ts && node scripts/copy-preload.mjs",
+    "capture:shots": "npm run build && cross-env LUMEN_CAPTURE=1 electron ."
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

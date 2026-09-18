@@ -191,6 +191,7 @@ npm run dev
 | `npm run build:main` | 仅构建 electron 主进程 |
 | `npm test` | 运行全部 vitest 测试（夹具，不发网络） |
 | `npx tsc -p tsconfig.json --noEmit` | 类型检查 |
+| `npm run capture:shots` | 一键捕获 8 个 Tab 的 PNG 到 `images/`（截图工具脚本，详见下方「开发工具：截图捕获」） |
 
 开发辅助环境变量（非必须）：
 
@@ -198,6 +199,26 @@ npm run dev
 - `LUMEN_INTERVAL_MINUTES`：自动调度间隔兜底值（分钟，默认 30；已在 UI「采集策略」配置后以 UI 为准）
 - `STOCK_REFRESH_MINUTES`：股票行情自动刷新间隔（分钟，默认 5）
 - `LUMEN_DEBUG=1`：打印渲染层 DOM/console 便于排查白屏
+- `LUMEN_CAPTURE=1`：配合 `capture:shots` 启用截图模式（脚本已自动设，**一般不用手设**）
+- `LUMEN_CAPTURE_DIR`：自定义截图输出目录（默认 `images/`）
+
+## 开发工具：截图捕获
+
+> 用于给 README / 文档 / 发布稿生成 8 个 Tab 的 PNG。
+
+```bash
+npm run capture:shots
+```
+
+- **做什么**：先 `npm run build`，再以 `LUMEN_CAPTURE=1` 启动 Electron；窗口加载完成后，主进程自动遍历 8 个 nav-btn → `executeJavaScript` 切 Tab → 等 2600ms 让图表/地图渲染 → `webContents.capturePage()` 截图 → 写 `<tab>.png`，完成后自动 `app.quit()`。
+- **输出目录**：默认 `images/`（仓库根）；可设 `LUMEN_CAPTURE_DIR` 改路径，目录会自动 `mkdir -p`。
+- **顺序**：固定为 `dashboard / timeline / graph / insights / trends / world / stocks / search`，与上方「截图一览」章节顺序一致。
+- **Git 策略**：**工具本身入源码，PNG 产物不入库**（`.gitignore` 已配 `images/`）；首次克隆后跑一次 `capture:shots` 即可在本地复现上方的 8 张截图。
+- **CI**：本工具是开发辅助，**不在 CI 自动跑**（需要桌面 Electron 环境）；只在发版前手跑一次刷新文档。
+- **注意事项**：
+  - 必须先 `npm run build`，因为脚本依赖 `dist/` + `dist-electron/` 产物。
+  - 每个 Tab 等 2600ms 是为图表/地图就绪的保守值；如果图表特别慢，可适当调长（修改 `electron/main/capture.ts` 的 `sleep(2600)`）。
+  - 暂只截可视区；如果某个 Tab 很长（如时间线/图谱），未来可改为整页截图（`capturePage()` 默认是可视区，需结合 `webContents.setVisualZoomLevelLimits` 等扩展）。
 
 ## 项目结构
 
