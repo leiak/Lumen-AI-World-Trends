@@ -26,6 +26,7 @@
 - **世界按日回放**：把最近 14 天按「每篇文章的日期」拆成日级热度，地图可播放/暂停/拖动时间轴回看世界热度的逐日演变。
 - **大洲聚合视图**：世界 Tab 「国家 / 大洲」双维度一键切换；大洲模式地图按所在洲总热度着色、榜单改显洲级热度，回放同样支持洲级逐日演变（`src/world/regions.ts`，8 洲静态映射，零依赖）。
 - **股票行情 Tab**：指数/A股/港股/美股约 33 个内置标的 + **自选股可增删**（输入市场前缀代码，如 `usAAPL`/`hk00700`，添加前经行情接口校验；腾讯公开行情 qt.gtimg.cn + ifzq.gtimg.cn，无需 API Key），报价表 + ECharts K 线（**日K/周K/月K**、红涨绿跌、可缩放），**每 5 分钟自动刷新**（`STOCK_REFRESH_MINUTES` 可调）与本地缓存离线可看上次行情。
+- **股票增强**（M22）：自选股**分组**（默认/可新增/重命名/删除，行内 chip 操作；不可删默认/最后剩 1 组保护）、**多种排序**（默认 / 名称 / 最新价 / 涨跌额 / 涨跌幅一键切换）、**财务指标**列（PE / PB / 总市值 / 换手率 / 振幅 / 量比，按钮一键显隐）、**价格预警**（每行 🔔：涨破 / 跌破 价位，或涨跌幅超过阈值；命中触发系统通知；同日去重避免刷屏；`stock_alert` 表 + `scanAlerts` 纯函数扫描 + Electron `Notification` 触发）。
 - **市场×趋势联动**：趋势 Tab「大盘与热点联动」把指数收盘价（右轴）叠加到 Top 热点热度（左轴）同一时间轴（缺失交易日断线）；世界 Tab「全球市场冷暖」展示上证/恒生/纳指等 9 大指数当日涨跌（红涨绿跌）——全部由本地行情缓存驱动。
 - **本地缓存**：SQLite 落盘（`sql.js`），采集/建图/解读后与退出前自动持久化，离线可回看/检索。
 - **无服务端**：主进程 Node 完成采集/图谱/趋势/AI，渲染层仅展示；二者只走 Electron IPC，不监听任何端口。
@@ -150,6 +151,10 @@ npm test
 - **趋势**：top 话题热度折线 + **大盘与热点联动**（选指数，双 Y 轴叠加收盘价与热度；`topics:list` + `stocks:history`）
 - **世界**：国家热点榜单 + 点击查看国家详情（关联话题/文章）+ 2-4 国热度对比折线 + 地图**按日回放**（播放/暂停/滑块）+ **国家/大洲双维度** + **全球市场冷暖**条（9 大指数当日涨跌；`countries:detail` / `countries:series` / `world:timeline` / `stocks:list`）
 - **股票**：自选股报价表（名称/代码/最新价/涨跌/涨跌幅，红涨绿跌；可添加/移除代码，`stocks:watch` / `stocks:add` / `stocks:remove`）+ 点击行看 K 线（**日K/周K/月K** 切换 + 成交量副图 + 缩放，`stocks:history`），带「刷新行情」、5 分钟自动刷新与本地缓存（`stocks:list` / `stocks:refresh`）
+  - **分组**：顶部 chip 切分组（默认/可新增/重命名/删除，最后剩 1 组与「默认」不可删保护），`stocks:groups:*`
+  - **排序**：默认/名称/最新价/涨跌/涨跌幅一键切换
+  - **财务指标**：PE / PB / 总市值 / 换手率 / 振幅 / 量比（按钮显隐）
+  - **价格预警**：行内 🔔 弹窗新增预警（涨破价 / 跌破价 / 涨幅> / 跌幅>），命中触发系统通知（同日去重），`stocks:alerts:*`
 - **检索**：本地全文搜索已抓文章（`search:fulltext`）
 - **时间线**：事件按时间倒序回放，含关联文章（`timeline:replay`）
 - **图谱**：实体节点 + 共现边 + 可开关的事件节点（`graph:query`）
@@ -265,12 +270,12 @@ lumen/
 - **图谱**：关系类型 v1 仅 `co-occurrence`；真正的因果/包含关系交给 AI 解读阶段。
 - **因果链**：v1 基于共享实体的时间相邻锚点，AI 断言可选；v2 支持跨实体合并成全局叙事 + AI 摘要 + 反事实推演；下一步可做时序因果/影响量化。
 - **导出快照**：v1 为 Markdown/JSON 全文导出；可扩展为图表 PNG、订阅式自动归档。
-- **股票行情**：行情来自腾讯公开接口（第三方免费源，可能限流/变更）；已支持自选股增删、日/周/月 K 与 5 分钟自动刷新；下一步可做自选分组/排序、财务指标、涨跌幅排序与预警。
+- **股票行情**：行情来自腾讯公开接口（第三方免费源，可能限流/变更）；已支持自选股增删、日/周/月 K 与 5 分钟自动刷新；**M22 新增**自选分组、多种排序、6 项财务指标（PE/PB/总市值/换手率/振幅/量比）与价格预警（涨破/跌破/涨幅阈值 + 系统通知）；下一步可做 K 线技术指标叠加（MA/MACD）或自选导入/导出。
 - **AI**：解读聚焦最热话题（≤400 字）；可按需扩展周报/月报样式与模型切换。
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series` `world:timeline` `stocks:list` `stocks:refresh` `stocks:history` `stocks:watch` `stocks:add` `stocks:remove`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series` `world:timeline` `stocks:list` `stocks:refresh` `stocks:history` `stocks:watch` `stocks:add` `stocks:remove` `stocks:groups:list` `stocks:groups:create` `stocks:groups:rename` `stocks:groups:remove` `stocks:groups:setWatch` `stocks:alerts:list` `stocks:alerts:add` `stocks:alerts:remove` `stocks:alerts:toggle`。
 
 ## 授权说明
 

@@ -25,7 +25,16 @@ export const ALL_CHANNELS = [
   'stocks:history',
   'stocks:watch',
   'stocks:add',
-  'stocks:remove'
+  'stocks:remove',
+  'stocks:groups:list',
+  'stocks:groups:create',
+  'stocks:groups:rename',
+  'stocks:groups:remove',
+  'stocks:groups:setWatch',
+  'stocks:alerts:list',
+  'stocks:alerts:add',
+  'stocks:alerts:remove',
+  'stocks:alerts:toggle'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

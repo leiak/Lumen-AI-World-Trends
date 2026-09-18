@@ -6,8 +6,9 @@ export function saveQuotes(db: Database, quotes: StockQuote[]): void {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO stock_quote
       (symbol, name, price, prev_close, change, change_pct,
-       open, high, low, volume, amount, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       open, high, low, volume, amount, updated_at,
+       pe, pb, market_cap, turnover_pct, amplitude_pct, volume_ratio)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const q of quotes) {
     stmt.run([
@@ -22,7 +23,13 @@ export function saveQuotes(db: Database, quotes: StockQuote[]): void {
       q.low ?? null,
       q.volume ?? null,
       q.amount ?? null,
-      q.tradedAt || new Date().toISOString()
+      q.tradedAt || new Date().toISOString(),
+      q.pe ?? null,
+      q.pb ?? null,
+      q.marketCap ?? null,
+      q.turnoverPct ?? null,
+      q.amplitudePct ?? null,
+      q.volumeRatio ?? null
     ]);
   }
   stmt.free();
@@ -42,7 +49,13 @@ function toQuote(r: Record<string, unknown>): StockQuote {
     low: nul(r.low),
     volume: nul(r.volume),
     amount: nul(r.amount),
-    tradedAt: String(r.updated_at)
+    tradedAt: String(r.updated_at),
+    pe: nul(r.pe),
+    pb: nul(r.pb),
+    marketCap: nul(r.market_cap),
+    turnoverPct: nul(r.turnover_pct),
+    amplitudePct: nul(r.amplitude_pct),
+    volumeRatio: nul(r.volume_ratio)
   };
 }
 
@@ -108,13 +121,13 @@ export function loadKline(
   return rows.reverse();
 }
 
-export function seedDefaultWatch(db: Database, items: WatchItemSource[]): number {
+export function seedDefaultWatch(db: Database, items: WatchItemSource[], groupId: number | null = null): number {
   const stmt = db.prepare(
-    'INSERT OR IGNORE INTO stock_watch (symbol, name, market, sort) VALUES (?, ?, ?, ?)'
+    'INSERT OR IGNORE INTO stock_watch (symbol, name, market, sort, group_id) VALUES (?, ?, ?, ?, ?)'
   );
   let n = 0;
   items.forEach((w, i) => {
-    stmt.run([w.symbol, w.name, w.market, i]);
+    stmt.run([w.symbol, w.name, w.market, i, groupId]);
     if (db.getRowsModified() > 0) n++;
   });
   stmt.free();
@@ -123,10 +136,15 @@ export function seedDefaultWatch(db: Database, items: WatchItemSource[]): number
 
 export function loadWatch(db: Database): StockWatchItem[] {
   const out: StockWatchItem[] = [];
-  const stmt = db.prepare('SELECT symbol, name, market FROM stock_watch ORDER BY sort, rowid');
+  const stmt = db.prepare('SELECT symbol, name, market, group_id FROM stock_watch ORDER BY sort, rowid');
   while (stmt.step()) {
-    const r = stmt.getAsObject() as unknown as { symbol: string; name: string; market: string };
-    out.push({ symbol: r.symbol, name: r.name, market: r.market });
+    const r = stmt.getAsObject() as unknown as {
+      symbol: string;
+      name: string;
+      market: string;
+      group_id: number | null;
+    };
+    out.push({ symbol: r.symbol, name: r.name, market: r.market, groupId: r.group_id });
   }
   stmt.free();
   return out;
@@ -138,9 +156,9 @@ export function addWatch(db: Database, item: StockWatchItem): void {
   const sort = Number((sortStmt.getAsObject() as unknown as { s: number }).s) || 0;
   sortStmt.free();
   const stmt = db.prepare(
-    'INSERT OR REPLACE INTO stock_watch (symbol, name, market, sort) VALUES (?, ?, ?, ?)'
+    'INSERT OR REPLACE INTO stock_watch (symbol, name, market, sort, group_id) VALUES (?, ?, ?, ?, ?)'
   );
-  stmt.run([item.symbol, item.name, item.market, sort]);
+  stmt.run([item.symbol, item.name, item.market, sort, item.groupId ?? null]);
   stmt.free();
 }
 

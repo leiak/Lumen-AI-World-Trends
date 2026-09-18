@@ -10,7 +10,15 @@ import type { CountryDetail, CountrySeriesResult } from '../../../shared/world.j
 import type { WorldTimeline } from '../../../shared/world.js';
 import type { CausalChain } from '../../../shared/causal.js';
 import type { SettingsView } from '../../../shared/settings.js';
-import type { StockHistoryResult, StocksView, StocksWatchView } from '../../../shared/stocks.js';
+import type {
+  StockAlert,
+  StockGroup,
+  StockHistoryResult,
+  StocksAlertsView,
+  StocksGroupsView,
+  StocksView,
+  StocksWatchView
+} from '../../../shared/stocks.js';
 import type { ExportResult } from '../../../shared/contracts.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
@@ -45,6 +53,15 @@ export interface IpcDeps {
   runStocksWatch?: () => Promise<IpcResponse<StocksWatchView>>;
   runStocksAdd?: (payload: unknown) => Promise<IpcResponse<StocksWatchView>>;
   runStocksRemove?: (payload: unknown) => Promise<IpcResponse<StocksWatchView>>;
+  runStocksGroupsList?: () => Promise<IpcResponse<StocksGroupsView>>;
+  runStocksGroupsCreate?: (payload: unknown) => Promise<IpcResponse<StockGroup>>;
+  runStocksGroupsRename?: (payload: unknown) => Promise<IpcResponse<StocksGroupsView>>;
+  runStocksGroupsRemove?: (payload: unknown) => Promise<IpcResponse<StocksGroupsView>>;
+  runStocksGroupsSetWatch?: (payload: unknown) => Promise<IpcResponse<StocksWatchView>>;
+  runStocksAlertsList?: (payload: unknown) => Promise<IpcResponse<StocksAlertsView>>;
+  runStocksAlertsAdd?: (payload: unknown) => Promise<IpcResponse<StockAlert>>;
+  runStocksAlertsRemove?: (payload: unknown) => Promise<IpcResponse<{ ok: true }>>;
+  runStocksAlertsToggle?: (payload: unknown) => Promise<IpcResponse<StockAlert>>;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -83,6 +100,15 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runStocksWatch) attach('stocks:watch', deps.runStocksWatch);
   if (deps.runStocksAdd) ipcMain.handle('stocks:add', (_e, payload) => deps.runStocksAdd!(payload));
   if (deps.runStocksRemove) ipcMain.handle('stocks:remove', (_e, payload) => deps.runStocksRemove!(payload));
+  if (deps.runStocksGroupsList) attach('stocks:groups:list', deps.runStocksGroupsList);
+  if (deps.runStocksGroupsCreate) ipcMain.handle('stocks:groups:create', (_e, payload) => deps.runStocksGroupsCreate!(payload));
+  if (deps.runStocksGroupsRename) ipcMain.handle('stocks:groups:rename', (_e, payload) => deps.runStocksGroupsRename!(payload));
+  if (deps.runStocksGroupsRemove) ipcMain.handle('stocks:groups:remove', (_e, payload) => deps.runStocksGroupsRemove!(payload));
+  if (deps.runStocksGroupsSetWatch) ipcMain.handle('stocks:groups:setWatch', (_e, payload) => deps.runStocksGroupsSetWatch!(payload));
+  if (deps.runStocksAlertsList) ipcMain.handle('stocks:alerts:list', (_e, payload) => deps.runStocksAlertsList!(payload));
+  if (deps.runStocksAlertsAdd) ipcMain.handle('stocks:alerts:add', (_e, payload) => deps.runStocksAlertsAdd!(payload));
+  if (deps.runStocksAlertsRemove) ipcMain.handle('stocks:alerts:remove', (_e, payload) => deps.runStocksAlertsRemove!(payload));
+  if (deps.runStocksAlertsToggle) ipcMain.handle('stocks:alerts:toggle', (_e, payload) => deps.runStocksAlertsToggle!(payload));
 }
 
 

@@ -253,3 +253,29 @@ body {
 .toggle-btn.on { border-color: var(--ok); color: var(--ok); }
 .source-check { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
 .source-check input { accent-color: var(--accent-2); margin: 0; }
+
+/* M22: 模态框 + select + form-row */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal {
+  background: var(--bg-card, #161b22);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 320px;
+  max-width: 480px;
+}
+.modal h3 { margin-top: 0; }
+.form-row { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.form-row label { color: var(--muted, #8b949e); min-width: 80px; }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.select {
+  background: var(--bg-hover, #21262d);
+  border: 1px solid var(--border, #30363d);
+  color: var(--text, #c9d1d9);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}

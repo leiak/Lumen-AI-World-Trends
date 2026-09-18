@@ -33,6 +33,12 @@ export function parseQuoteLine(line: string): StockQuote | null {
     change = price - prevClose;
     changePct = (change / prevClose) * 100;
   }
+  // 财务指标：HK/US 字段缺失时为 undefined
+  const optNum = (v: string | undefined): number | undefined => {
+    if (v === undefined || v === '' || v === '0.00' || v === '0') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
   return {
     symbol,
     name: f[1] || symbol,
@@ -45,7 +51,13 @@ export function parseQuoteLine(line: string): StockQuote | null {
     low: f[34] ? num(f[34]) : undefined,
     volume: f[6] ? num(f[6]) : undefined,
     amount: f[37] ? num(f[37]) : undefined,
-    tradedAt: f[30] ?? ''
+    tradedAt: f[30] ?? '',
+    pe: optNum(f[43]),
+    pb: optNum(f[44]),
+    marketCap: optNum(f[45]),
+    turnoverPct: optNum(f[38]),
+    amplitudePct: optNum(f[39]),
+    volumeRatio: optNum(f[49])
   };
 }
 
@@ -125,7 +137,13 @@ export class MockStockProvider implements StockProvider {
         low: price - 4,
         volume: 100000,
         amount: 99999,
-        tradedAt: '20260915150000'
+        tradedAt: '20260915150000',
+        pe: 15.5,
+        pb: 3.2,
+        marketCap: 1234567,
+        turnoverPct: 1.2,
+        amplitudePct: 3.4,
+        volumeRatio: 1.1
       };
     });
   }

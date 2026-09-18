@@ -40,6 +40,35 @@ describe('Tencent 行情解析', () => {
     expect(q!.changePct).toBeCloseTo(0.6656, 3);
   });
 
+  it('解析财务指标字段（PE/PB/市值/换手/振幅/量比）', () => {
+    const q = parseQuoteLine(
+      quoteLine({
+        1: '贵州茅台', 2: '600519', 3: '1750.000', 4: '1740.000',
+        30: '20260915150000',
+        38: '0.85', 39: '1.23',
+        43: '28.5', 44: '9.1', 45: '21999990000000', 49: '1.05'
+      }, 'sh600519')
+    );
+    expect(q!.pe).toBeCloseTo(28.5, 3);
+    expect(q!.pb).toBeCloseTo(9.1, 3);
+    expect(q!.marketCap).toBeCloseTo(21999990000000, 3);
+    expect(q!.turnoverPct).toBeCloseTo(0.85, 3);
+    expect(q!.amplitudePct).toBeCloseTo(1.23, 3);
+    expect(q!.volumeRatio).toBeCloseTo(1.05, 3);
+  });
+
+  it('财务指标字段缺失时落 undefined（HK/US 场景）', () => {
+    const q = parseQuoteLine(
+      quoteLine({ 1: '苹果', 2: 'AAPL', 3: '220.5', 4: '218.0' }, 'usAAPL')
+    );
+    expect(q!.pe).toBeUndefined();
+    expect(q!.pb).toBeUndefined();
+    expect(q!.marketCap).toBeUndefined();
+    expect(q!.turnoverPct).toBeUndefined();
+    expect(q!.amplitudePct).toBeUndefined();
+    expect(q!.volumeRatio).toBeUndefined();
+  });
+
   it('解析 K 线 JSON（qfqday 优先，缺省用 day）', () => {
     const payload = {
       data: {

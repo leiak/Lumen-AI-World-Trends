@@ -146,6 +146,47 @@ CREATE TABLE IF NOT EXISTS stock_watch (
 );
 `;
 
+const MIGRATION_9_DDL = `
+CREATE TABLE IF NOT EXISTS stock_group (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  sort INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS stock_alert (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  threshold REAL NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_fired_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_symbol ON stock_alert(symbol);
+CREATE INDEX IF NOT EXISTS idx_alert_enabled ON stock_alert(enabled);
+`;
+
+/** sql.js 不支持 `ALTER TABLE ADD COLUMN IF NOT EXISTS` —— 包成安全执行。
+ *  抛错信息含 "duplicate column" 时视为成功；其余错误向上抛。 */
+function safeAlter(db: Database, sql: string): void {
+  try {
+    db.exec(sql);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/duplicate column name|already exists/i.test(msg)) throw e;
+  }
+}
+
+const MIGRATION_9_ALTERS = [
+  'ALTER TABLE stock_watch ADD COLUMN group_id INTEGER REFERENCES stock_group(id) ON DELETE SET NULL;',
+  'ALTER TABLE stock_quote ADD COLUMN pe REAL;',
+  'ALTER TABLE stock_quote ADD COLUMN pb REAL;',
+  'ALTER TABLE stock_quote ADD COLUMN market_cap REAL;',
+  'ALTER TABLE stock_quote ADD COLUMN turnover_pct REAL;',
+  'ALTER TABLE stock_quote ADD COLUMN amplitude_pct REAL;',
+  'ALTER TABLE stock_quote ADD COLUMN volume_ratio REAL;'
+];
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
@@ -155,9 +196,11 @@ export function migrate(db: Database): void {
   db.exec(MIGRATION_6);
   db.exec(MIGRATION_7);
   db.exec(MIGRATION_8);
+  db.exec(MIGRATION_9_DDL);
+  for (const stmt of MIGRATION_9_ALTERS) safeAlter(db, stmt);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '8');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '9');`
   );
 }
 

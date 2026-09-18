@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, Notification, dialog } from 'electron';
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,23 @@ import {
   removeWatch,
   seedDefaultWatch
 } from './db/stocks.js';
+import {
+  listGroups,
+  createGroup,
+  renameGroup,
+  removeGroup,
+  setWatchGroup,
+  seedDefaultGroup,
+  getDefaultGroup
+} from './db/stocksGroups.js';
+import {
+  addAlert,
+  listAlerts,
+  removeAlert,
+  toggleAlert,
+  markFired,
+  scanAlerts
+} from './db/stocksAlerts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -93,7 +110,7 @@ function createWindow(): void {
             console.error('LUMEN_CAPTURE_FAIL', String(err));
           })
           .finally(() => app.quit());
-      }, 1500);
+      }, 3000);
     });
   }
 
@@ -113,7 +130,7 @@ void app.whenReady().then(async () => {
     ready = false;
     console.error('[lumen] database init failed', err);
   }
-  seedDefaultWatch(getDb(), DEFAULT_WATCHLIST);
+  seedDefaultWatch(getDb(), DEFAULT_WATCHLIST, seedDefaultGroup(getDb()));
 
   const persist = (): void => {
     try {
@@ -147,6 +164,36 @@ void app.whenReady().then(async () => {
     });
     saveQuotes(getDb(), merged);
     persist();
+    // 预警扫描
+    const fired = scanAlerts({ quotes: merged, alerts: listAlerts(getDb()) });
+    if (fired.length === 0) return;
+    markFired(getDb(), fired.map((f) => f.alert.id));
+    persist();
+    for (const { alert, quote } of fired) {
+      const desc = describeAlert(alert, quote);
+      if (Notification.isSupported()) {
+        try {
+          const n = new Notification({
+            title: `Lumen · ${quote.name} 预警`,
+            body: desc,
+            silent: false
+          });
+          n.show();
+        } catch (e) {
+          console.warn('[lumen] notification failed', desc, e);
+        }
+      } else {
+        console.log('[lumen][alert]', desc);
+      }
+    }
+  };
+
+  const describeAlert = (a: import('../../shared/stocks.js').StockAlert, q: import('../../shared/stocks.js').StockQuote): string => {
+    const op = a.kind.startsWith('price')
+      ? a.kind === 'price_above' ? `≥ ${a.threshold}` : `≤ ${a.threshold}`
+      : a.kind === 'pct_above' ? `涨 ≥ ${a.threshold}%` : `跌 ≤ ${a.threshold}%`;
+    const val = a.kind.startsWith('price') ? q.price.toFixed(2) : `${q.changePct.toFixed(2)}%`;
+    return `${op} · 当前 ${val}`;
   };
 
   registerIpc({
@@ -419,7 +466,7 @@ void app.whenReady().then(async () => {
           return { ok: false, error: `unsupported or invalid symbol: ${symbol}` };
         }
         const market = symbol.startsWith('hk') ? 'hk' : symbol.startsWith('us') ? 'us' : 'cn';
-        addWatch(db, { symbol, name: quote.name, market });
+        addWatch(db, { symbol, name: quote.name, market, groupId: getDefaultGroup(db).id });
         persist();
         return { ok: true, data: { items: loadWatch(db) } };
       } catch (e) {
@@ -433,6 +480,91 @@ void app.whenReady().then(async () => {
       removeWatch(getDb(), symbol);
       persist();
       return { ok: true, data: { items: loadWatch(getDb()) } };
+    },
+    runStocksGroupsList: async () => ({ ok: true, data: { items: listGroups(getDb()) } }),
+    runStocksGroupsCreate: async (payload) => {
+      const p = (payload ?? {}) as { name?: string };
+      const name = String(p.name ?? '');
+      if (!name.trim()) return { ok: false, error: 'missing group name' };
+      try {
+        const g = createGroup(getDb(), name);
+        return { ok: true, data: g };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksGroupsRename: async (payload) => {
+      const p = (payload ?? {}) as { id?: number; name?: string };
+      const id = Number(p.id);
+      const name = String(p.name ?? '');
+      if (!Number.isFinite(id)) return { ok: false, error: 'missing id' };
+      if (!name.trim()) return { ok: false, error: 'missing name' };
+      try {
+        renameGroup(getDb(), id, name);
+        return { ok: true, data: { items: listGroups(getDb()) } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksGroupsRemove: async (payload) => {
+      const p = (payload ?? {}) as { id?: number };
+      const id = Number(p.id);
+      if (!Number.isFinite(id)) return { ok: false, error: 'missing id' };
+      try {
+        removeGroup(getDb(), id);
+        return { ok: true, data: { items: listGroups(getDb()) } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksGroupsSetWatch: async (payload) => {
+      const p = (payload ?? {}) as { symbol?: string; groupId?: number | null };
+      const symbol = String(p.symbol ?? '').trim();
+      if (!symbol) return { ok: false, error: 'missing symbol' };
+      const groupId = p.groupId === null || p.groupId === undefined ? null : Number(p.groupId);
+      setWatchGroup(getDb(), symbol, groupId);
+      persist();
+      return { ok: true, data: { items: loadWatch(getDb()) } };
+    },
+    runStocksAlertsList: async (payload) => {
+      const p = (payload ?? {}) as { symbol?: string };
+      const symbol = p.symbol ? String(p.symbol) : undefined;
+      return { ok: true, data: { items: listAlerts(getDb(), symbol) } };
+    },
+    runStocksAlertsAdd: async (payload) => {
+      const p = (payload ?? {}) as { symbol?: string; kind?: string; threshold?: number };
+      try {
+        const created = addAlert(getDb(), {
+          symbol: String(p.symbol ?? ''),
+          kind: p.kind as never,
+          threshold: Number(p.threshold)
+        });
+        return { ok: true, data: created };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksAlertsRemove: async (payload) => {
+      const p = (payload ?? {}) as { id?: number };
+      const id = Number(p.id);
+      if (!Number.isFinite(id)) return { ok: false, error: 'missing id' };
+      try {
+        removeAlert(getDb(), id);
+        return { ok: true, data: { ok: true } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    runStocksAlertsToggle: async (payload) => {
+      const p = (payload ?? {}) as { id?: number; enabled?: boolean };
+      const id = Number(p.id);
+      if (!Number.isFinite(id)) return { ok: false, error: 'missing id' };
+      try {
+        const updated = toggleAlert(getDb(), id, Boolean(p.enabled));
+        return { ok: true, data: updated };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     }
   });
 
