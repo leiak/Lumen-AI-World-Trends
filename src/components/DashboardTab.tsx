@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useEngineStatus } from '../hooks/useEngineStatus';
 import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
@@ -15,6 +15,8 @@ const METRICS: { key: keyof DashboardSnapshot['metrics']; labelKey: I18nKey }[] 
   { key: 'edges', labelKey: 'dash.metric.edges' },
   { key: 'addedToday', labelKey: 'dash.metric.addedToday' }
 ];
+
+const HOT_TOP_LIMIT = 10;
 
 export default function DashboardTab() {
   const { t } = useI18n();
@@ -190,15 +192,15 @@ export default function DashboardTab() {
 function HotTopWidget() {
   const { t } = useI18n();
   const { data, run } = useInvoke<SourceArticle[]>('articles:byHot');
-  const [max, setMax] = useState(0);
 
   useEffect(() => {
-    void run({ window: '24h', limit: 10 });
+    void run({ window: '24h', limit: HOT_TOP_LIMIT });
   }, []);
 
-  useEffect(() => {
-    if (data) setMax(data.reduce((m, a) => Math.max(m, a.hotScore ?? 0), 0));
-  }, [data]);
+  const max = useMemo(
+    () => data?.reduce((m, a) => Math.max(m, a.hotScore ?? 0), 0) ?? 0,
+    [data]
+  );
 
   if (!data || data.length === 0) return null;
 
