@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
+import type { I18nKey } from '../i18n/dict';
 import EChart from './EChart';
-import HotBadge from './HotBadge';
+import HotBadge, { type HotStyle } from './HotBadge';
 import { useHotStyle } from '../hooks/useHotStyle';
 import { buildOverlaySeries } from '../stocks/overlay';
 import { MARKET_INDEX_SYMBOLS } from '../../shared/stocks';
@@ -11,13 +12,23 @@ import type { StocksView, StockHistoryResult } from '../../shared/stocks';
 import type { HotWindow } from '../../shared/contracts';
 import type { SourceArticle } from '../../shared/models';
 
+type SortMode = 'time' | 'hot';
+
+const HOT_LIST_LIMIT = 50;
+
+const WINDOW_KEYS: Record<HotWindow, I18nKey> = {
+  '24h': 'hot.win24h',
+  '7d': 'hot.win7d',
+  '30d': 'hot.win30d',
+  all: 'hot.winAll'
+};
+
 export default function TrendsTab() {
   const { t } = useI18n();
   const { data, run } = useInvoke<TrendsResult>('topics:list');
   const market = useInvoke<StocksView>('stocks:list');
   const hist = useInvoke<StockHistoryResult>('stocks:history');
   const [indexSymbol, setIndexSymbol] = useState<string>(MARKET_INDEX_SYMBOLS[0]);
-  type SortMode = 'time' | 'hot';
   const [sortMode, setSortMode] = useState<SortMode>('time');
   const [hotWindow, setHotWindow] = useState<HotWindow>('24h');
   const [hotStyle, setHotStyle] = useHotStyle();
@@ -34,9 +45,9 @@ export default function TrendsTab() {
 
   useEffect(() => {
     if (sortMode === 'hot') {
-      void hotArticles.run({ window: hotWindow, limit: 50 });
+      void hotArticles.run({ window: hotWindow, limit: HOT_LIST_LIMIT });
     }
-  }, [sortMode, hotWindow]);
+  }, [sortMode, hotWindow, hotArticles.run]);
 
   const indexName =
     market.data?.quotes.find((q) => q.symbol === indexSymbol)?.name ?? indexSymbol;
@@ -53,20 +64,20 @@ export default function TrendsTab() {
           <span className="muted">{t('trends.market.hint')}</span>
         </div>
         <div className="trends-hot-controls">
-          <div className="seg-group">
-            <button className={`seg${sortMode === 'time' ? ' on' : ''}`} onClick={() => setSortMode('time')}>{t('hot.sortByTime')}</button>
-            <button className={`seg${sortMode === 'hot' ? ' on' : ''}`} onClick={() => setSortMode('hot')}>{t('hot.sortByHot')}</button>
+          <div className="chips">
+            <button className={`chip pick${sortMode === 'time' ? ' on' : ''}`} onClick={() => setSortMode('time')}>{t('hot.sortByTime')}</button>
+            <button className={`chip pick${sortMode === 'hot' ? ' on' : ''}`} onClick={() => setSortMode('hot')}>{t('hot.sortByHot')}</button>
           </div>
           {sortMode === 'hot' && (
             <>
-              <div className="seg-group">
+              <div className="chips">
                 {(['24h','7d','30d','all'] as const).map((w) => (
-                  <button key={w} className={`seg${hotWindow === w ? ' on' : ''}`} onClick={() => setHotWindow(w)}>{t(w === 'all' ? 'hot.winAll' : `hot.win${w}`)}</button>
+                  <button key={w} className={`chip pick${hotWindow === w ? ' on' : ''}`} onClick={() => setHotWindow(w)}>{t(WINDOW_KEYS[w])}</button>
                 ))}
               </div>
-              <div className="seg-group">
+              <div className="chips">
                 {(['A','B','C','D'] as const).map((s) => (
-                  <button key={s} className={`seg style-${s.toLowerCase()}${hotStyle === s ? ' on' : ''}`} onClick={() => setHotStyle(s)}>{s}</button>
+                  <button key={s} className={`chip pick style-${s.toLowerCase()}${hotStyle === s ? ' on' : ''}`} onClick={() => setHotStyle(s)}>{s}</button>
                 ))}
               </div>
             </>
@@ -188,9 +199,10 @@ export default function TrendsTab() {
   );
 }
 
-function HotList({ articles, style }: { articles: SourceArticle[]; style: 'A' | 'B' | 'C' | 'D' }) {
+function HotList({ articles, style }: { articles: SourceArticle[]; style: HotStyle }) {
+  const { t } = useI18n();
   const max = articles.reduce((m, a) => Math.max(m, a.hotScore ?? 0), 0);
-  if (articles.length === 0) return <p className="muted">—</p>;
+  if (articles.length === 0) return <p className="muted">{t('hot.hotEmpty')}</p>;
   return (
     <ul className="hot-list">
       {articles.map((a) => (
