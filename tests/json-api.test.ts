@@ -49,6 +49,14 @@ describe('json-api 适配器', () => {
     await expect(c.collect()).rejects.toThrow('title and url required');
   });
 
+  it('缺 fieldsMap.url 抛错', async () => {
+    const c = createJsonApiCollector(
+      { ...cfg, fieldsMap: { title: 'title' } },
+      async () => []
+    );
+    await expect(c.collect()).rejects.toThrow('title and url required');
+  });
+
   it('字段取值为 undefined 跳过该条', async () => {
     const c = createJsonApiCollector(cfg, async () => [
       { title: 'OK', url: 'http://x/1', num: 1 },

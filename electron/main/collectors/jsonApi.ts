@@ -1,10 +1,6 @@
 import axios from 'axios';
 import { normalizeArticle } from './ids.js';
-import type {
-  Collector,
-  FieldsMap,
-  JsonApiSourceConfig
-} from './types.js';
+import type { Collector, JsonApiSourceConfig } from './types.js';
 import type { SourceArticle } from '../../../shared/models.js';
 
 type LoadJson = (url: string, headers?: Record<string, string>) => Promise<unknown>;
@@ -71,40 +67,41 @@ function numOrNull(v: unknown): number | null {
 }
 
 export function createJsonApiCollector(
-  cfg: JsonApiSourceConfig,
+  config: JsonApiSourceConfig,
   loadJson: LoadJson = defaultLoadJson
 ): Collector {
   return {
-    config: cfg,
+    config,
     async collect(): Promise<SourceArticle[]> {
-      if (!cfg.apiUrl) throw new Error('apiUrl required');
-      if (!cfg.fieldsMap.title || !cfg.fieldsMap.url) {
+      if (!config.apiUrl) throw new Error('apiUrl required');
+      if (!config.fieldsMap.title || !config.fieldsMap.url) {
         throw new Error('fieldsMap.title and url required');
       }
-      const raw = await loadJson(cfg.apiUrl, cfg.headers);
-      const arr = cfg.dataPath ? getByPath(raw, cfg.dataPath) : raw;
+      const raw = await loadJson(config.apiUrl, config.headers);
+      const arr = config.dataPath ? getByPath(raw, config.dataPath) : raw;
       if (!Array.isArray(arr)) return [];
       const out: SourceArticle[] = [];
       for (const item of arr) {
-        const title = pluck(item, cfg.fieldsMap.title);
-        const url = pluck(item, cfg.fieldsMap.url);
+        const title = pluck(item, config.fieldsMap.title);
+        const url = pluck(item, config.fieldsMap.url);
         if (!title || !url) continue;
+        // json-api uses fieldsMap.content (full body); description reserved for future use
         const article = normalizeArticle(
-          cfg,
+          config,
           {
             title: String(title),
             url: String(url),
-            content: cfg.fieldsMap.content
-              ? pluck(item, cfg.fieldsMap.content)
+            content: config.fieldsMap.content
+              ? (pluck(item, config.fieldsMap.content) as string | undefined)
               : undefined,
-            publishedAt: cfg.fieldsMap.publishedAt
-              ? (pluck(item, cfg.fieldsMap.publishedAt) as string | undefined)
+            publishedAt: config.fieldsMap.publishedAt
+              ? (pluck(item, config.fieldsMap.publishedAt) as string | undefined)
               : undefined
           }
         );
         article.hotScore = numOrNull(
-          cfg.fieldsMap.hotScore
-            ? pluck(item, cfg.fieldsMap.hotScore)
+          config.fieldsMap.hotScore
+            ? pluck(item, config.fieldsMap.hotScore)
             : undefined
         );
         out.push(article);
@@ -113,6 +110,3 @@ export function createJsonApiCollector(
     }
   };
 }
-
-// Suppress unused-import warning for FieldsMap type if tree-shaken later
-export type { FieldsMap };
