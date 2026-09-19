@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { useEngineStatus } from '../hooks/useEngineStatus';
 import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
+import HotBadge from './HotBadge';
 import type { DashboardSnapshot } from '../../shared/dashboard';
 import type { SettingsView } from '../../shared/settings';
+import type { SourceArticle } from '../../shared/models';
 import type { I18nKey } from '../i18n/dict';
 
 const METRICS: { key: keyof DashboardSnapshot['metrics']; labelKey: I18nKey }[] = [
@@ -66,6 +68,7 @@ export default function DashboardTab() {
 
   return (
     <section>
+      <HotTopWidget />
       <div className="card">
         <h2>{t('dash.title')}</h2>
         {snap ? (
@@ -181,5 +184,36 @@ export default function DashboardTab() {
         )}
       </div>
     </section>
+  );
+}
+
+function HotTopWidget() {
+  const { t } = useI18n();
+  const { data, run } = useInvoke<SourceArticle[]>('articles:byHot');
+  const [max, setMax] = useState(0);
+
+  useEffect(() => {
+    void run({ window: '24h', limit: 10 });
+  }, []);
+
+  useEffect(() => {
+    if (data) setMax(data.reduce((m, a) => Math.max(m, a.hotScore ?? 0), 0));
+  }, [data]);
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <div className="card">
+      <h2>{t('hot.todayHot')}</h2>
+      <ul className="hot-list">
+        {data.map((a) => (
+          <li key={a.rawHash} className="hot-row">
+            <a href={a.url} target="_blank" rel="noreferrer">{a.title}</a>
+            <span className="muted">{a.source}</span>
+            <HotBadge score={a.hotScore ?? null} style="C" max={max} />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
