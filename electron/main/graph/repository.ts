@@ -121,7 +121,7 @@ export function listByHot(
        FROM source_article a
        INNER JOIN article_entity e ON e.article_id = a.raw_hash
        WHERE a.hot_score IS NOT NULL
-         AND a.published_at >= ${windowSql}
+         AND datetime(a.published_at) >= ${windowSql}
          AND e.entity_id LIKE '%' || ? || '%'
        ORDER BY a.hot_score DESC, a.published_at DESC
        LIMIT ?`
@@ -129,7 +129,7 @@ export function listByHot(
               a.published_at, a.crawled_at, a.hot_score
        FROM source_article a
        WHERE a.hot_score IS NOT NULL
-         AND a.published_at >= ${windowSql}
+         AND datetime(a.published_at) >= ${windowSql}
        ORDER BY a.hot_score DESC, a.published_at DESC
        LIMIT ?`;
 

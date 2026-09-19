@@ -82,4 +82,21 @@ describe('listByHot', () => {
     const out = listByHot(db, { window: 'all', limit: 3 });
     expect(out).toHaveLength(3);
   });
+
+  // Regression: M24 code review found `a.published_at >= ${windowSql}` does lexical
+  // string comparison between ISO 8601 (LHS, contains 'T') and SQLite canonical
+  // (RHS, contains ' '). Since 'T' (0x54) > ' ' (0x20), an article published > 24h
+  // ago but on the same UTC date as the cutoff can wrongly pass the filter.
+  // The fix wraps the LHS in datetime() so both sides share canonical form.
+  it('24h window excludes articles published > 24h ago (ISO vs SQLite lexical bug)', () => {
+    const h23 = new Date(Date.now() - 23 * 3600 * 1000).toISOString();
+    const h25 = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+    saveArticle(db, makeArticle({ rawHash: 'a4', title: '23h 内', publishedAt: h23, hotScore: 100 }));
+    saveArticle(db, makeArticle({ rawHash: 'a5', title: '25h 外', publishedAt: h25, hotScore: 999 }));
+
+    const out = listByHot(db, { window: '24h' });
+    const titles = out.map((a) => a.title);
+    expect(titles).toContain('23h 内');
+    expect(titles).not.toContain('25h 外');
+  });
 });
