@@ -216,7 +216,18 @@ const zhDict = {
   'insights.exporting': '导出中…',
   'insights.exported': '已导出: {path}',
   'insights.exportFailed': '导出失败: {msg}',
-  'insights.exportCanceled': '已取消导出。'
+  'insights.exportCanceled': '已取消导出。',
+  'hot.sortByHot': '按热度',
+  'hot.sortByTime': '按时间',
+  'hot.todayHot': '今日热点 Top 10',
+  'hot.countryHot': '该国今日热点',
+  'hot.win24h': '24 小时',
+  'hot.win7d': '7 天',
+  'hot.win30d': '30 天',
+  'hot.winAll': '全部',
+  'hot.displayStyle': '显示风格',
+  'hot.hotEmpty': '该时段暂无热点文章',
+  'hot.label': '热度'
 } as const;
 
 export type I18nKey = keyof typeof zhDict;
@@ -438,7 +449,18 @@ const enDict: Record<I18nKey, string> = {
   'insights.exporting': 'Exporting…',
   'insights.exported': 'Exported: {path}',
   'insights.exportFailed': 'Export failed: {msg}',
-  'insights.exportCanceled': 'Export canceled.'
+  'insights.exportCanceled': 'Export canceled.',
+  'hot.sortByHot': 'By heat',
+  'hot.sortByTime': 'By time',
+  'hot.todayHot': "Today's Hot Top 10",
+  'hot.countryHot': 'Hot in this country',
+  'hot.win24h': '24 hours',
+  'hot.win7d': '7 days',
+  'hot.win30d': '30 days',
+  'hot.winAll': 'All time',
+  'hot.displayStyle': 'Display style',
+  'hot.hotEmpty': 'No hot articles in this window',
+  'hot.label': 'Heat'
 };
 
 export function translate(lang: Lang, key: I18nKey, vars?: Vars): string {
