@@ -8,8 +8,9 @@ import { openDatabase, saveDatabase } from './db/connection.js';
 import { setDb, getDb } from './state.js';
 import { runCrawl } from './db/persistence.js';
 import { saveInsight, listInsights } from './db/insights.js';
-import { createRssCollector } from './collectors/rss.js';
+import { createCollector } from './collectors/factory.js';
 import { REAL_SOURCES } from './collectors/registry.js';
+import { disposeHeadless } from './browser/headless.js';
 import { captureAllTabs } from './capture.js';
 import {
   searchArticles,
@@ -206,7 +207,7 @@ void app.whenReady().then(async () => {
       })
     }),
     runManualCrawl: async () => {
-      const collectors = enabledCollectors(getDb(), REAL_SOURCES).map((cfg) => createRssCollector(cfg));
+      const collectors = enabledCollectors(getDb(), REAL_SOURCES).map((cfg) => createCollector(cfg));
       const summary = await runCrawl(getDb(), collectors);
       persist();
       return { ok: true, data: summary };
@@ -581,7 +582,7 @@ void app.whenReady().then(async () => {
     job: async () => {
       lastAutoRunAt = new Date().toISOString();
       const db = getDb();
-      const collectors = enabledCollectors(getDb(), REAL_SOURCES).map((cfg) => createRssCollector(cfg));
+      const collectors = enabledCollectors(getDb(), REAL_SOURCES).map((cfg) => createCollector(cfg));
       await runCrawl(db, collectors);
       await buildGraphFromDb(db, defaultGazetteer());
       computeTrends(db);
@@ -601,7 +602,10 @@ void app.whenReady().then(async () => {
   app.on('will-quit', () => clearInterval(stockTimer));
 
   createWindow();
-  app.on('before-quit', () => persist());
+  app.on('before-quit', () => {
+    persist();
+    disposeHeadless();
+  });
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

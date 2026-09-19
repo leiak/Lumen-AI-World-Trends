@@ -24,6 +24,7 @@ describe('中文 RSS 采集', () => {
   it('REAL_SOURCES 含中文源且 lang=zh', () => {
     const zh = REAL_SOURCES.filter((s) => s.lang === 'zh');
     expect(zh.length).toBeGreaterThanOrEqual(1);
-    expect(zh.every((s) => s.kind === 'rss')).toBe(true);
+    const zhRss = zh.filter((s) => s.kind === 'rss');
+    expect(zhRss.length).toBeGreaterThanOrEqual(1);
   });
 });
