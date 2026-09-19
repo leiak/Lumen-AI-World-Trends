@@ -100,6 +100,62 @@ function rowToArticle(r: Record<string, string | null>): SourceArticle {
   };
 }
 
+export function listByHot(
+  db: Database,
+  opts: {
+    window: '24h' | '7d' | '30d' | 'all';
+    limit?: number;
+    countryEntity?: string;
+  }
+): SourceArticle[] {
+  const limit = opts.limit ?? 50;
+  const windowSql =
+    opts.window === '24h' ? "datetime('now', '-1 day')" :
+    opts.window === '7d'  ? "datetime('now', '-7 days')" :
+    opts.window === '30d' ? "datetime('now', '-30 days')" :
+    "datetime('1970-01-01')";
+
+  const sql = opts.countryEntity
+    ? `SELECT DISTINCT a.raw_hash, a.source, a.title, a.content, a.url, a.lang,
+              a.published_at, a.crawled_at, a.hot_score
+       FROM source_article a
+       INNER JOIN article_entity e ON e.article_id = a.raw_hash
+       WHERE a.hot_score IS NOT NULL
+         AND a.published_at >= ${windowSql}
+         AND e.entity_id LIKE '%' || ? || '%'
+       ORDER BY a.hot_score DESC, a.published_at DESC
+       LIMIT ?`
+    : `SELECT a.raw_hash, a.source, a.title, a.content, a.url, a.lang,
+              a.published_at, a.crawled_at, a.hot_score
+       FROM source_article a
+       WHERE a.hot_score IS NOT NULL
+         AND a.published_at >= ${windowSql}
+       ORDER BY a.hot_score DESC, a.published_at DESC
+       LIMIT ?`;
+
+  const stmt = db.prepare(sql);
+  const params = opts.countryEntity ? [opts.countryEntity.toLowerCase(), limit] : [limit];
+  stmt.bind(params);
+  const out: SourceArticle[] = [];
+  while (stmt.step()) {
+    const r = stmt.getAsObject() as Record<string, string | number | null>;
+    out.push({
+      id: r.raw_hash as string,
+      source: r.source as string,
+      title: r.title as string,
+      content: (r.content as string | null) ?? undefined,
+      url: r.url as string,
+      lang: (r.lang as 'zh' | 'en') ?? 'en',
+      publishedAt: (r.published_at as string | null) ?? null,
+      crawledAt: r.crawled_at as string,
+      rawHash: r.raw_hash as string,
+      hotScore: (r.hot_score as number | null) ?? null
+    });
+  }
+  stmt.free();
+  return out;
+}
+
 export function loadArticles(db: Database, limit = 200): SourceArticle[] {
   const stmt = db.prepare(
     `SELECT raw_hash, source, title, content, url, lang, published_at, crawled_at
