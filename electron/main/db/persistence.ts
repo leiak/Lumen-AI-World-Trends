@@ -20,8 +20,8 @@ export function insertArticles(db: Database, articles: SourceArticle[]): number 
   let inserted = 0;
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO source_article
-       (raw_hash, source, title, content, url, lang, published_at, crawled_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       (raw_hash, source, title, content, url, lang, published_at, crawled_at, hot_score)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (const a of articles) {
     stmt.run([
@@ -32,7 +32,8 @@ export function insertArticles(db: Database, articles: SourceArticle[]): number 
       a.url,
       a.lang,
       a.publishedAt,
-      a.crawledAt
+      a.crawledAt,
+      a.hotScore ?? null
     ]);
     if (db.getRowsModified() > 0) inserted++;
   }

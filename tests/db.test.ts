@@ -30,13 +30,17 @@ describe('database', () => {
     expect(tables).toContain('article_entity');
   });
 
-  it('写入 schema_version = 9 且存在 insight/causal_chain/stock_group/stock_alert 表', () => {
+  it('写入 schema_version = 10 且存在 insight/causal_chain/stock_group/stock_alert 表', () => {
     const stmt = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`);
     const has = stmt.step();
     const row = stmt.getAsObject() as { value: string };
     stmt.free();
     expect(has).toBe(true);
-    expect(row.value).toBe('9');
+    expect(row.value).toBe('10');
+    // 验证 hot_score 列存在
+    const colRes = db.exec(`PRAGMA table_info(source_article)`);
+    const cols = colRes[0] ? colRes[0].values.map((r) => r[1] as string) : [];
+    expect(cols).toContain('hot_score');
     for (const table of ['insight', 'causal_chain', 'stock_group', 'stock_alert']) {
       const res = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`);
       expect(res.length).toBeGreaterThan(0);

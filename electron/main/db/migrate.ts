@@ -187,6 +187,10 @@ const MIGRATION_9_ALTERS = [
   'ALTER TABLE stock_quote ADD COLUMN volume_ratio REAL;'
 ];
 
+const MIGRATION_10_ALTERS = [
+  'ALTER TABLE source_article ADD COLUMN hot_score INTEGER;'
+];
+
 export function migrate(db: Database): void {
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
@@ -198,9 +202,10 @@ export function migrate(db: Database): void {
   db.exec(MIGRATION_8);
   db.exec(MIGRATION_9_DDL);
   for (const stmt of MIGRATION_9_ALTERS) safeAlter(db, stmt);
+  for (const stmt of MIGRATION_10_ALTERS) safeAlter(db, stmt);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '9');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '10');`
   );
 }
 
