@@ -8,4 +8,5 @@ export interface SourceArticle {
   publishedAt: string | null;
   crawledAt: string;
   rawHash: string;
+  hotScore?: number | null;
 }
