@@ -1,13 +1,13 @@
 import * as cheerio from 'cheerio';
 import axios from 'axios';
 import { normalizeArticle } from './ids.js';
-import type { Collector, SourceConfig } from './types.js';
+import type { Collector, HtmlSourceConfig } from './types.js';
 
 type LoadHtml = (url: string) => Promise<string>;
 const defaultLoadHtml: LoadHtml = async (url) => (await axios.get<string>(url)).data;
 
 export function createHtmlCollector(
-  config: SourceConfig,
+  config: HtmlSourceConfig,
   loadHtml: LoadHtml = defaultLoadHtml
 ): Collector {
   return {
