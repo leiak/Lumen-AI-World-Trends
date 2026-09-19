@@ -18,6 +18,9 @@ export function createBrowserCollector(
       if (!config.browserExtractScript) {
         throw new Error('browserExtractScript required');
       }
+      if (!config.fieldsMap.title || !config.fieldsMap.url) {
+        throw new Error('fieldsMap.title and url required');
+      }
       try {
         const raw = await navigate(config.browserUrl, {
           waitSel: config.browserWaitSelector,
@@ -27,8 +30,8 @@ export function createBrowserCollector(
         if (!Array.isArray(raw)) return [];
         const out: SourceArticle[] = [];
         for (const item of raw) {
-          const title = pluck(item, config.fieldsMap.title!);
-          const url = pluck(item, config.fieldsMap.url!);
+          const title = pluck(item, config.fieldsMap.title);
+          const url = pluck(item, config.fieldsMap.url);
           if (!title || !url) continue;
           const article = normalizeArticle(config, {
             title: String(title),

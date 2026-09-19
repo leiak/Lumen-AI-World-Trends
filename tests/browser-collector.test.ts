@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createBrowserCollector } from '../electron/main/collectors/browser.js';
 import type { BrowserSourceConfig } from '../electron/main/collectors/types.js';
 
-const cfg: BrowserSourceConfig = {
+const config: BrowserSourceConfig = {
   id: 'demo',
   name: 'Demo',
   lang: 'zh',
@@ -19,7 +19,7 @@ describe('browser 适配器', () => {
       { title: 'A', url: 'http://x/1', num: 100 },
       { title: 'B', url: 'http://x/2', num: 200 }
     ]);
-    const c = createBrowserCollector(cfg, navigate);
+    const c = createBrowserCollector(config, navigate);
     const arts = await c.collect();
     expect(arts).toHaveLength(2);
     expect(arts[0].title).toBe('A');
@@ -28,7 +28,7 @@ describe('browser 适配器', () => {
     expect(navigate).toHaveBeenCalledWith('http://example.test/', {
       waitSel: undefined,
       waitMs: undefined,
-      extractScript: cfg.browserExtractScript
+      extractScript: config.browserExtractScript
     });
   });
 
@@ -36,14 +36,14 @@ describe('browser 适配器', () => {
     const navigate = vi.fn(async () => {
       throw new Error('load fail');
     });
-    const c = createBrowserCollector(cfg, navigate);
+    const c = createBrowserCollector(config, navigate);
     const arts = await c.collect();
     expect(arts).toEqual([]);
   });
 
   it('navigate 返回非数组 → 返回空数组', async () => {
     const navigate = vi.fn(async () => ({ not: 'array' }));
-    const c = createBrowserCollector(cfg, navigate);
+    const c = createBrowserCollector(config, navigate);
     const arts = await c.collect();
     expect(arts).toEqual([]);
   });
@@ -55,8 +55,8 @@ describe('browser 适配器', () => {
       if (call === 1) throw new Error('first source boom');
       return [{ title: 'OK', url: 'http://x/1' }];
     });
-    const c1 = createBrowserCollector(cfg, navigate);
-    const c2 = createBrowserCollector(cfg, navigate);
+    const c1 = createBrowserCollector(config, navigate);
+    const c2 = createBrowserCollector(config, navigate);
     const a1 = await c1.collect();
     const a2 = await c2.collect();
     expect(a1).toEqual([]);
@@ -65,7 +65,7 @@ describe('browser 适配器', () => {
 
   it('缺 browserExtractScript 抛错', async () => {
     const c = createBrowserCollector(
-      { ...cfg, browserExtractScript: '' },
+      { ...config, browserExtractScript: '' },
       async () => []
     );
     await expect(c.collect()).rejects.toThrow('browserExtractScript required');
