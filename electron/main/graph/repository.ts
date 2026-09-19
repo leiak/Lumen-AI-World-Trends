@@ -96,7 +96,8 @@ function rowToArticle(r: Record<string, string | null>): SourceArticle {
     lang: (r.lang as 'zh' | 'en') ?? 'en',
     publishedAt: r.published_at ?? null,
     crawledAt: r.crawled_at!,
-    rawHash: r.raw_hash!
+    rawHash: r.raw_hash!,
+    hotScore: r.hot_score == null ? null : Number(r.hot_score)
   };
 }
 
@@ -158,7 +159,7 @@ export function listByHot(
 
 export function loadArticles(db: Database, limit = 200): SourceArticle[] {
   const stmt = db.prepare(
-    `SELECT raw_hash, source, title, content, url, lang, published_at, crawled_at
+    `SELECT raw_hash, source, title, content, url, lang, published_at, crawled_at, hot_score
      FROM source_article ORDER BY crawled_at DESC LIMIT ?`
   );
   stmt.bind([limit]);
@@ -171,7 +172,7 @@ export function loadArticles(db: Database, limit = 200): SourceArticle[] {
 export function searchArticles(db: Database, query: string, limit = 50): SourceArticle[] {
   const like = `%${query}%`;
   const stmt = db.prepare(
-    `SELECT raw_hash, source, title, content, url, lang, published_at, crawled_at
+    `SELECT raw_hash, source, title, content, url, lang, published_at, crawled_at, hot_score
      FROM source_article WHERE title LIKE ? OR content LIKE ?
      ORDER BY crawled_at DESC LIMIT ?`
   );
