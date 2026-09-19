@@ -34,7 +34,8 @@ export const ALL_CHANNELS = [
   'stocks:alerts:list',
   'stocks:alerts:add',
   'stocks:alerts:remove',
-  'stocks:alerts:toggle'
+  'stocks:alerts:toggle',
+  'articles:byHot'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];
@@ -62,6 +63,14 @@ export interface ExportResult {
   saved: boolean;
   path?: string;
   error?: string;
+}
+
+export type HotWindow = '24h' | '7d' | '30d' | 'all';
+
+export interface ArticlesByHotRequest {
+  window?: HotWindow;
+  limit?: number;
+  countryEntity?: string;
 }
 
 
