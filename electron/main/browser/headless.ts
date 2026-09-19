@@ -5,7 +5,7 @@ let win: BrowserWindow | null = null;
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+  '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 async function getWin(): Promise<BrowserWindow> {
   if (win && !win.isDestroyed()) return win;
@@ -15,7 +15,7 @@ async function getWin(): Promise<BrowserWindow> {
     height: 800,
     webPreferences: {
       offscreen: false,
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true
     }
   });
@@ -23,7 +23,7 @@ async function getWin(): Promise<BrowserWindow> {
   return win;
 }
 
-export const browserNavigate: BrowserNavigate = async (url, opts) => {
+async function runOne(url: string, opts: { waitSel?: string; waitMs?: number; extractScript: string }): Promise<unknown> {
   const w = await getWin();
   await w.loadURL(url);
   const waitMs = opts.waitMs ?? 4000;
@@ -42,6 +42,17 @@ export const browserNavigate: BrowserNavigate = async (url, opts) => {
   return w.webContents.executeJavaScript(
     `(function(){${opts.extractScript}})()`
   );
+}
+
+// Serialize calls so concurrent browser collectors don't race on the singleton window.
+// runCollectors uses Promise.all, so without this mutex loadURL/executeJavaScript
+// interleave against whichever page is currently loaded.
+let chain: Promise<unknown> = Promise.resolve();
+
+export const browserNavigate: BrowserNavigate = (url, opts) => {
+  const next = chain.then(() => runOne(url, opts));
+  chain = next.catch(() => undefined); // don't poison the chain on failure
+  return next;
 };
 
 export function disposeHeadless(): void {
