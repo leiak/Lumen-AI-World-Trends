@@ -60,7 +60,7 @@ export function getByPath(obj: unknown, path: string): unknown {
   return cur;
 }
 
-function numOrNull(v: unknown): number | null {
+export function numOrNull(v: unknown): number | null {
   if (v === undefined || v === null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
