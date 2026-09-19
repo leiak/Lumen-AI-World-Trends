@@ -33,6 +33,7 @@ export interface IpcDeps {
   runInsightList?: (payload: unknown) => Promise<IpcResponse<Insight[]>>;
   runInsightWeekly?: () => Promise<IpcResponse<Insight>>;
   runSearch?: (payload: unknown) => Promise<IpcResponse<SourceArticle[]>>;
+  runArticlesByHot?: (payload: unknown) => Promise<IpcResponse<SourceArticle[]>>;
   runTimeline?: () => Promise<IpcResponse<TimelineEvent[]>>;
   runGraphQuery?: (payload: unknown) => Promise<IpcResponse<GraphView>>;
   runCountryDetail?: (payload: unknown) => Promise<IpcResponse<CountryDetail | null>>;
@@ -81,6 +82,7 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runInsightWeekly) attach('insights:weekly', deps.runInsightWeekly);
   if (deps.runTimeline) attach('timeline:replay', deps.runTimeline);
   if (deps.runSearch) ipcMain.handle('search:fulltext', (_e, payload) => deps.runSearch!(payload));
+  if (deps.runArticlesByHot) ipcMain.handle('articles:byHot', (_e, payload) => deps.runArticlesByHot!(payload));
   if (deps.runGraphQuery) ipcMain.handle('graph:query', (_e, payload) => deps.runGraphQuery!(payload));
   if (deps.runCountryDetail) ipcMain.handle('countries:detail', (_e, payload) => deps.runCountryDetail!(payload));
   if (deps.runCausalityList) ipcMain.handle('causality:list', (_e, payload) => deps.runCausalityList!(payload));

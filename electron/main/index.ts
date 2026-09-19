@@ -15,7 +15,8 @@ import { captureAllTabs } from './capture.js';
 import {
   searchArticles,
   listEvents,
-  queryGraph
+  queryGraph,
+  listByHot
 } from './graph/repository.js';
 import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
 import { computeTrends } from './trends/engine.js';
@@ -251,6 +252,13 @@ void app.whenReady().then(async () => {
           ? String((payload as { query?: string }).query ?? '')
           : '';
       return { ok: true, data: searchArticles(getDb(), q) };
+    },
+    runArticlesByHot: async (payload) => {
+      const req = (payload ?? {}) as { window?: '24h' | '7d' | '30d' | 'all'; limit?: number; countryEntity?: string };
+      const window = req.window ?? '24h';
+      const limit = req.limit ?? 50;
+      const articles = listByHot(getDb(), { window, limit, countryEntity: req.countryEntity });
+      return { ok: true, data: articles };
     },
     runTimeline: async () => ({ ok: true, data: listEvents(getDb()) }),
     runGraphQuery: async (payload) => {
