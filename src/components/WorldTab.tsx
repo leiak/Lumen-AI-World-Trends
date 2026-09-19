@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as echarts from 'echarts';
 import { useInvoke } from '../hooks/useInvoke';
 import { useI18n } from '../i18n/I18n';
 import EChart from './EChart';
+import HotBadge from './HotBadge';
 import { worldGeo, normalizeCountry, countriesToMapData } from '../world/geo';
 import { aggregateRegions, regionOfCountry } from '../world/regions';
 import { MARKET_INDEX_SYMBOLS } from '../../shared/stocks';
+import type { SourceArticle } from '../../shared/models';
 import type { TrendsResult } from '../../shared/trend';
 import type { CountryDetail, CountrySeriesResult, WorldTimeline } from '../../shared/world';
 import type { StocksView } from '../../shared/stocks';
@@ -286,7 +288,9 @@ export default function WorldTab() {
       </div>
 
       {detailName && (
-        <div className="card">
+        <>
+          <CountryHotWidget entity={detailName} />
+          <div className="card">
           <h3>{t('world.detail')}: {detailName}</h3>
           {detail.loading ? (
             <p className="muted">{t('common.loading')}</p>
@@ -327,7 +331,40 @@ export default function WorldTab() {
             <p className="muted">{t('world.noRelated')}</p>
           )}
         </div>
+        </>
       )}
     </section>
+  );
+}
+
+const COUNTRY_HOT_LIMIT = 5;
+
+function CountryHotWidget({ entity }: { entity: string }) {
+  const { t } = useI18n();
+  const { data, run } = useInvoke<SourceArticle[]>('articles:byHot');
+  const max = useMemo(
+    () => data?.reduce((m, a) => Math.max(m, a.hotScore ?? 0), 0) ?? 0,
+    [data]
+  );
+
+  useEffect(() => {
+    void run({ window: '24h', countryEntity: entity, limit: COUNTRY_HOT_LIMIT });
+  }, [entity]);
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <div className="card country-hot-widget">
+      <h3>{t('hot.countryHot')}</h3>
+      <ul className="hot-list">
+        {data.map((a) => (
+          <li key={a.rawHash} className="hot-row">
+            <a href={a.url} target="_blank" rel="noreferrer">{a.title}</a>
+            <span className="muted">{a.source}</span>
+            <HotBadge score={a.hotScore ?? null} style="B" max={max} />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
