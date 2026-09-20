@@ -4,7 +4,6 @@ dist-electron/
 data/
 *.log
 
-# 截图捕获产物（`npm run capture:shots` 生成；工具本身入源码）
-images/
+
 
 .superpowers/
