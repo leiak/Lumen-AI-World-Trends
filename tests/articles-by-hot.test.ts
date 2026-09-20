@@ -103,4 +103,30 @@ describe('articles:byHot end-to-end', () => {
     // Top three by hot_score DESC.
     expect(out.map((a) => a.hotScore)).toEqual([50, 49, 48]);
   });
+
+  it('breaks hot_score ties by published_at DESC', () => {
+    // Two articles with SAME hot_score but different publishedAt.
+    // SQL: ORDER BY a.hot_score DESC, a.published_at DESC — the secondary
+    // sort must surface the more recently published article first.
+    saveArticle(
+      db,
+      makeArticle({
+        rawHash: 'tie-old',
+        hotScore: 100,
+        publishedAt: '2026-01-01T00:00:00.000Z'
+      })
+    );
+    saveArticle(
+      db,
+      makeArticle({
+        rawHash: 'tie-new',
+        hotScore: 100,
+        publishedAt: '2026-01-02T00:00:00.000Z'
+      })
+    );
+
+    const out = listByHot(db, { window: 'all' });
+
+    expect(out.map((a) => a.rawHash)).toEqual(['tie-new', 'tie-old']);
+  });
 });
