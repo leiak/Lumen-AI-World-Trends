@@ -10,6 +10,7 @@
 
 - **双语聚合**：内置五路 RSS（BBC World / The Guardian World / NYT World / 36氪 / IT之家），中英双语；界面支持一键中/英切换。
 - **中文热点源**（M23）：6 路自动采集——微博热搜 / 知乎热榜 / 头条热榜 / 百度热搜 / B站热门 / 抖音热门；引入 `json-api` 与 `browser`（复用 Electron BrowserWindow）两种新适配器，热度数值结构化入 `article.hot_score`。
+- **热度排序 UI**（M24）：trends / dashboard / world 三视图消费 `article.hot_score`；trends 可切 24h/7d/30d/all + 4 种显示风格；dashboard 顶部「今日热点 Top 10」；world 国家详情「该国今日热点 5 条」。
 - **事件图谱**：实体抽取（词典 gazetteer）→ 共现关系 → 共享实体聚类成事件，落库为 entity / event / edge。
 - **趋势引擎**：按时间桶计算话题热度序列、动量（涨/跌）、世界热点（国家维度）。
 - **AI 因果解读**：对最热话题生成中文因果解读；provider 可插拔（火山方舟 ARK / Mock）。
@@ -267,6 +268,7 @@ lumen/
 ## 局限与路线图
 
 - ✓ **中文热点站（微博/知乎等）**（M23）：已用 Electron BrowserWindow 复用 Chromium 接入 6 源（微博 / 知乎 / 头条 / 百度 / B站 / 抖音），新增 `json-api` / `browser` 两种适配器，热度结构化入 `article.hot_score`。
+- ✓ **热度排序 UI**（M24）：trends 加 sort/window/style 控件；dashboard Top 10 widget；world 国家详情 Top 5；4 种 HotBadge 风格。
 - **世界热力地图**：已实现 choropleth（110m 粒度）+ 按日回放 + 国家/大洲双维度（大洲映射为精选列表，缺省落入「其他」，可在 `src/world/regions.ts` 扩充）；更细行政区可换用 50m GeoJSON 重生成（`scripts/gen-world-geo.mjs`），回放可扩展为周/月档与动画插帧。
 - **实体识别**：当前为词典 + 句法匹配；可升级为本地 NLP 或交给 AI 做更细抽取与上下位关系。
 - **图谱**：关系类型 v1 仅 `co-occurrence`；真正的因果/包含关系交给 AI 解读阶段。
