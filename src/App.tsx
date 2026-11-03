@@ -1,16 +1,28 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { I18nProvider, useI18n } from './i18n/I18n';
 import DashboardTab from './components/DashboardTab';
-import TimelineTab from './components/TimelineTab';
-import GraphTab from './components/GraphTab';
-import InsightsTab from './components/InsightsTab';
-import TrendsTab from './components/TrendsTab';
-import WorldTab from './components/WorldTab';
-import StocksTab from './components/StocksTab';
-import SearchTab from './components/SearchTab';
 import type { I18nKey } from './i18n/dict';
 
-type Tab = 'dashboard' | 'timeline' | 'graph' | 'insights' | 'trends' | 'world' | 'stocks' | 'search';
+// P5：按 Tab 懒加载，避免 ECharts / React Flow 全部进入首屏主包。
+const TimelineTab = lazy(() => import('./components/TimelineTab'));
+const GraphTab = lazy(() => import('./components/GraphTab'));
+const InsightsTab = lazy(() => import('./components/InsightsTab'));
+const TrendsTab = lazy(() => import('./components/TrendsTab'));
+const WorldTab = lazy(() => import('./components/WorldTab'));
+const StocksTab = lazy(() => import('./components/StocksTab'));
+const SearchTab = lazy(() => import('./components/SearchTab'));
+const AgentTab = lazy(() => import('./components/AgentTab'));
+
+type Tab =
+  | 'dashboard'
+  | 'timeline'
+  | 'graph'
+  | 'insights'
+  | 'trends'
+  | 'world'
+  | 'stocks'
+  | 'search'
+  | 'agent';
 
 const TABS: { id: Tab; labelKey: I18nKey }[] = [
   { id: 'dashboard', labelKey: 'nav.dashboard' },
@@ -20,7 +32,8 @@ const TABS: { id: Tab; labelKey: I18nKey }[] = [
   { id: 'trends', labelKey: 'nav.trends' },
   { id: 'world', labelKey: 'nav.world' },
   { id: 'stocks', labelKey: 'nav.stocks' },
-  { id: 'search', labelKey: 'nav.search' }
+  { id: 'search', labelKey: 'nav.search' },
+  { id: 'agent', labelKey: 'nav.agent' }
 ];
 
 function Shell() {
@@ -44,20 +57,24 @@ function Shell() {
           <button
             key={tabDef.id}
             className={`nav-btn${tab === tabDef.id ? ' active' : ''}`}
+            data-testid={`nav-${tabDef.id}`}
             onClick={() => setTab(tabDef.id)}
           >
             {t(tabDef.labelKey)}
           </button>
         ))}
       </nav>
-      {tab === 'dashboard' && <DashboardTab />}
-      {tab === 'timeline' && <TimelineTab />}
-      {tab === 'graph' && <GraphTab />}
-      {tab === 'insights' && <InsightsTab />}
-      {tab === 'trends' && <TrendsTab />}
-      {tab === 'world' && <WorldTab />}
-      {tab === 'stocks' && <StocksTab />}
-      {tab === 'search' && <SearchTab />}
+      <Suspense fallback={<div className="tab-loading" data-testid="tab-loading">…</div>}>
+        {tab === 'dashboard' && <DashboardTab />}
+        {tab === 'timeline' && <TimelineTab />}
+        {tab === 'graph' && <GraphTab />}
+        {tab === 'insights' && <InsightsTab />}
+        {tab === 'trends' && <TrendsTab />}
+        {tab === 'world' && <WorldTab />}
+        {tab === 'stocks' && <StocksTab />}
+        {tab === 'search' && <SearchTab />}
+        {tab === 'agent' && <AgentTab />}
+      </Suspense>
     </main>
   );
 }

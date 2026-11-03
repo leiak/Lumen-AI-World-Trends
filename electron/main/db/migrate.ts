@@ -191,7 +191,175 @@ const MIGRATION_10_ALTERS = [
   'ALTER TABLE source_article ADD COLUMN hot_score INTEGER;'
 ];
 
+/** P4：图草稿/发布状态与 spec 摘要；run 记录绑定摘要。 */
+const MIGRATION_13_ALTERS = [
+  "ALTER TABLE agent_graph ADD COLUMN status TEXT NOT NULL DEFAULT 'published';",
+  'ALTER TABLE agent_graph ADD COLUMN digest TEXT;',
+  'ALTER TABLE agent_run ADD COLUMN graph_digest TEXT;'
+];
+
+/** P5：审批挂起快照，供进程重启后只恢复 final 节点。 */
+const MIGRATION_14_ALTERS = [
+  'ALTER TABLE agent_run ADD COLUMN suspend_json TEXT;'
+];
+
+const MIGRATION_11 = `
+CREATE TABLE IF NOT EXISTS agent_graph (
+  graph_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  spec_json TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (graph_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_graph_active ON agent_graph(is_active);
+
+CREATE TABLE IF NOT EXISTS agent_run (
+  run_id TEXT PRIMARY KEY,
+  graph_id TEXT NOT NULL,
+  graph_version INTEGER NOT NULL,
+  thread_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued','running','interrupted','completed','failed','canceled')),
+  subject_key TEXT NOT NULL,
+  subject_label TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('topic','country','event')),
+  as_of TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  config_json TEXT NOT NULL,
+  state_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  rating TEXT,
+  review_required INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  calls INTEGER NOT NULL DEFAULT 0,
+  prompt_chars INTEGER NOT NULL DEFAULT 0,
+  completion_chars INTEGER NOT NULL DEFAULT 0,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  cost_usd REAL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_run_status ON agent_run(status, started_at);
+CREATE INDEX IF NOT EXISTS idx_agent_run_subject ON agent_run(subject_key, as_of);
+
+CREATE TABLE IF NOT EXISTS agent_run_event (
+  run_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  ts TEXT NOT NULL,
+  type TEXT NOT NULL,
+  node_id TEXT,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY (run_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS agent_node_result (
+  run_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  node_type TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','running','succeeded','failed','skipped')),
+  started_at TEXT,
+  ended_at TEXT,
+  elapsed_ms INTEGER,
+  input_summary TEXT,
+  output_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  PRIMARY KEY (run_id, node_id, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_node_run ON agent_node_result(run_id);
+
+CREATE TABLE IF NOT EXISTS agent_decision (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
+  subject_label TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  rating TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  thesis TEXT NOT NULL,
+  key_risks_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','settled','review')),
+  resolve_after TEXT,
+  resolved_at TEXT,
+  outcome_json TEXT,
+  reflection TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (subject_key, as_of, run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_decision_pending ON agent_decision(status, resolve_after);
+CREATE INDEX IF NOT EXISTS idx_agent_decision_subject ON agent_decision(subject_key, as_of);
+
+CREATE TABLE IF NOT EXISTS agent_memory (
+  id TEXT PRIMARY KEY,
+  decision_id TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  resolved_at TEXT NOT NULL,
+  rating TEXT NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  outcome_json TEXT NOT NULL,
+  reflection TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_subject ON agent_memory(subject_key, resolved_at);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_resolved ON agent_memory(resolved_at);
+`;
+
+const MIGRATION_12 = `
+DROP TABLE IF EXISTS agent_decision_v12;
+CREATE TABLE agent_decision_v12 (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
+  subject_label TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  rating TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  horizon_days INTEGER NOT NULL,
+  thesis TEXT NOT NULL,
+  key_risks_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','settled','insufficient','review')),
+  resolve_after TEXT,
+  resolved_at TEXT,
+  outcome_json TEXT,
+  reflection TEXT,
+  baseline_json TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (subject_key, as_of, run_id)
+);
+INSERT OR IGNORE INTO agent_decision_v12
+  (id, run_id, subject_key, subject_label, as_of, rating, confidence, horizon_days, thesis,
+   key_risks_json, status, resolve_after, resolved_at, outcome_json, reflection, baseline_json, created_at)
+  SELECT id, run_id, subject_key, subject_label, as_of, rating, confidence, horizon_days, thesis,
+   key_risks_json, status, resolve_after, resolved_at, outcome_json, reflection, NULL, created_at
+  FROM agent_decision;
+DROP TABLE agent_decision;
+ALTER TABLE agent_decision_v12 RENAME TO agent_decision;
+CREATE INDEX IF NOT EXISTS idx_agent_decision_pending ON agent_decision(status, resolve_after);
+CREATE INDEX IF NOT EXISTS idx_agent_decision_subject ON agent_decision(subject_key, as_of);
+CREATE INDEX IF NOT EXISTS idx_agent_decision_run ON agent_decision(run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_decision ON agent_memory(decision_id);
+`;
+
+function readSchemaVersion(db: Database): number {
+  try {
+    const res = db.exec("SELECT value FROM meta WHERE key='schema_version'");
+    const raw = res[0]?.values[0]?.[0];
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function migrate(db: Database): void {
+  const existing = readSchemaVersion(db);
   db.exec(MIGRATION_1);
   db.exec(MIGRATION_2);
   db.exec(MIGRATION_3);
@@ -203,9 +371,13 @@ export function migrate(db: Database): void {
   db.exec(MIGRATION_9_DDL);
   for (const stmt of MIGRATION_9_ALTERS) safeAlter(db, stmt);
   for (const stmt of MIGRATION_10_ALTERS) safeAlter(db, stmt);
+  db.exec(MIGRATION_11);
+  if (existing < 12) db.exec(MIGRATION_12);
+  if (existing < 13) for (const stmt of MIGRATION_13_ALTERS) safeAlter(db, stmt);
+  if (existing < 14) for (const stmt of MIGRATION_14_ALTERS) safeAlter(db, stmt);
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '10');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '14');`
   );
 }
 

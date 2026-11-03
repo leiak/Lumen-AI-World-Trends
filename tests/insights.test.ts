@@ -42,7 +42,8 @@ describe('insight 仓储', () => {
     const v = (stmt.getAsObject() as { value: string }).value;
     stmt.free();
     db.close();
-    expect(v).toBe('10');
+    // P5：schema 14 新增 agent_run.suspend_json（跨进程审批恢复）。
+    expect(v).toBe('14');
   });
 });
 

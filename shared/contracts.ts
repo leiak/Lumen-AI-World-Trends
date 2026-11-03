@@ -35,7 +35,22 @@ export const ALL_CHANNELS = [
   'stocks:alerts:add',
   'stocks:alerts:remove',
   'stocks:alerts:toggle',
-  'articles:byHot'
+  'articles:byHot',
+  'agent:graph',
+  'agent:run',
+  'agent:resume',
+  'agent:runs:resume',
+  'agent:cancel',
+  'agent:runs:list',
+  'agent:runs:get',
+  'agent:runs:events',
+  'agent:graphs:list',
+  'agent:graphs:get',
+  'agent:graphs:save',
+  'agent:graphs:delete',
+  'agent:graphs:restoreDefault',
+  'agent:memory:list',
+  'agent:memory:settle'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

@@ -22,8 +22,43 @@ import type {
 import type { ExportResult } from '../../../shared/contracts.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
+import type {
+  AgentGraphDeleteResponse,
+  AgentGraphGetResponse,
+  AgentGraphSaveResponse,
+  AgentGraphVersionSummary,
+  AgentIpcResponse,
+  AgentRunDetail,
+  AgentRunSummary,
+  CancelRunResponse,
+  EventsPage,
+  GraphSpec,
+  MemoryListResponse,
+  MemorySettleResponse,
+  ResumeRunResponse,
+  StartRunResponse
+} from '../../../shared/agent.js';
+
+/** 智能体相关 handler 由主进程注入；channel 与 shared/contracts 的 ALL_CHANNELS 对齐。 */
+export interface AgentIpcDeps {
+  graph: () => AgentIpcResponse<GraphSpec>;
+  listGraphs: () => AgentIpcResponse<AgentGraphVersionSummary[]>;
+  getGraph: (payload: unknown) => AgentIpcResponse<AgentGraphGetResponse>;
+  saveGraph: (payload: unknown) => AgentIpcResponse<AgentGraphSaveResponse>;
+  deleteGraph: (payload: unknown) => AgentIpcResponse<AgentGraphDeleteResponse>;
+  restoreDefaultGraph: () => AgentIpcResponse<AgentGraphSaveResponse>;
+  run: (payload: unknown) => Promise<AgentIpcResponse<StartRunResponse>>;
+  resume: (payload: unknown) => Promise<AgentIpcResponse<ResumeRunResponse>>;
+  cancel: (payload: unknown) => Promise<AgentIpcResponse<CancelRunResponse>>;
+  listRuns: (payload: unknown) => AgentIpcResponse<AgentRunSummary[]>;
+  getRun: (payload: unknown) => AgentIpcResponse<AgentRunDetail>;
+  getEvents: (payload: unknown) => AgentIpcResponse<EventsPage>;
+  memoryList: () => AgentIpcResponse<MemoryListResponse>;
+  memorySettle: () => AgentIpcResponse<MemorySettleResponse>;
+}
 
 export interface IpcDeps {
+  agent?: AgentIpcDeps;
   getStatus: () => EngineStatus;
   runDashboard?: () => Promise<IpcResponse<DashboardSnapshot>>;
   runManualCrawl?: () => Promise<IpcResponse<CrawlSummary>>;
@@ -111,6 +146,24 @@ export function registerIpc(deps: IpcDeps): void {
   if (deps.runStocksAlertsAdd) ipcMain.handle('stocks:alerts:add', (_e, payload) => deps.runStocksAlertsAdd!(payload));
   if (deps.runStocksAlertsRemove) ipcMain.handle('stocks:alerts:remove', (_e, payload) => deps.runStocksAlertsRemove!(payload));
   if (deps.runStocksAlertsToggle) ipcMain.handle('stocks:alerts:toggle', (_e, payload) => deps.runStocksAlertsToggle!(payload));
+  if (deps.agent) {
+    const agent = deps.agent;
+    ipcMain.handle('agent:graph', () => agent.graph());
+    ipcMain.handle('agent:graphs:list', () => agent.listGraphs());
+    ipcMain.handle('agent:graphs:get', (_e, payload) => agent.getGraph(payload));
+    ipcMain.handle('agent:graphs:save', (_e, payload) => agent.saveGraph(payload));
+    ipcMain.handle('agent:graphs:delete', (_e, payload) => agent.deleteGraph(payload));
+    ipcMain.handle('agent:graphs:restoreDefault', () => agent.restoreDefaultGraph());
+    ipcMain.handle('agent:run', (_e, payload) => agent.run(payload));
+    ipcMain.handle('agent:resume', (_e, payload) => agent.resume(payload));
+    ipcMain.handle('agent:runs:resume', (_e, payload) => agent.resume(payload));
+    ipcMain.handle('agent:cancel', (_e, payload) => agent.cancel(payload));
+    ipcMain.handle('agent:runs:list', (_e, payload) => agent.listRuns(payload));
+    ipcMain.handle('agent:runs:get', (_e, payload) => agent.getRun(payload));
+    ipcMain.handle('agent:runs:events', (_e, payload) => agent.getEvents(payload));
+    ipcMain.handle('agent:memory:list', () => agent.memoryList());
+    ipcMain.handle('agent:memory:settle', () => agent.memorySettle());
+  }
 }
 
 

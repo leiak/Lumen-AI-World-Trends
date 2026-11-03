@@ -21,7 +21,20 @@ import {
 import { buildGraphFromDb, defaultGazetteer } from './graph/build.js';
 import { computeTrends } from './trends/engine.js';
 import { interpretCausal, interpretWeekly } from './ai/interpreter.js';
-import { createProvider } from './ai/provider.js';
+import { createProvider, MockProvider } from './ai/provider.js';
+import { AgentRuntime } from './agent/runtime.js';
+import { defaultGraphSpec } from './agent/spec.js';
+import { listMemoryView, settleDueMemory } from './agent/memory.js';
+import {
+  AGENT_EVENT_CHANNEL,
+  type AgentGraphDeleteRequest,
+  type AgentGraphGetRequest,
+  type AgentGraphSaveRequest,
+  type AgentRunsListRequest,
+  type EventsPageRequest,
+  type ResumeRunRequest,
+  type StartRunRequest
+} from '../../shared/agent.js';
 import { startScheduler, resolveIntervalMs } from './scheduler.js'
 import { loadDashboardSnapshot } from './dash/summary.js';
 import { countryDetail, countrySeries } from './world/detail.js';
@@ -146,6 +159,42 @@ void app.whenReady().then(async () => {
 
   const provider = createProvider(process.env);
 
+  const agentRuntime = new AgentRuntime({
+    db: getDb(),
+    provider,
+    mockProvider: new MockProvider(),
+    persist,
+    send: (envelope) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(AGENT_EVENT_CHANNEL, envelope);
+      }
+    }
+  });
+  try {
+    agentRuntime.ensureDefaultGraph(defaultGraphSpec());
+    const recovery = agentRuntime.markInterruptedFromPreviousProcess();
+    if (recovery.recoverable > 0) {
+      console.info(`[lumen] ${recovery.recoverable} 个审批挂起 run 可在重启后恢复`);
+    }
+    if (recovery.failed > 0) {
+      console.warn(`[lumen] ${recovery.failed} 个残留 agent run 已标记失败（E_PROCESS_RESTART）`);
+    }
+    // P3：启动时做一次到期结算；不依赖系统级定时器。
+    const settled = settleDueMemory(getDb(), persist);
+    if (settled.scanned > 0) {
+      console.info(
+        `[lumen] 启动结算：扫描 ${settled.scanned}，结算 ${settled.settled}，数据不足 ${settled.insufficient}`
+      );
+    }
+  } catch (err) {
+    console.error('[lumen] agent runtime init failed', err);
+  }
+
+  const agentRunId = (payload: unknown): string =>
+    typeof payload === 'string'
+      ? payload
+      : String((payload as { runId?: string } | null)?.runId ?? '');
+
   const stockNameMap = (): Map<string, string> => {
     const m = new Map<string, string>();
     for (const w of loadWatch(getDb())) m.set(w.symbol, w.name);
@@ -200,6 +249,38 @@ void app.whenReady().then(async () => {
 
   registerIpc({
     getStatus: () => getEngineStatus(ready, dbPath, enabledCollectors(getDb(), REAL_SOURCES).map((s) => s.id)),
+    agent: {
+      graph: () => agentRuntime.getGraph(),
+      listGraphs: () => agentRuntime.listGraphs(),
+      getGraph: (payload) => agentRuntime.getGraphView((payload ?? {}) as AgentGraphGetRequest),
+      saveGraph: (payload) => agentRuntime.saveGraph((payload ?? {}) as AgentGraphSaveRequest),
+      deleteGraph: (payload) => agentRuntime.deleteGraph((payload ?? {}) as AgentGraphDeleteRequest),
+      restoreDefaultGraph: () => agentRuntime.restoreDefaultGraph(),
+      run: (payload) => agentRuntime.startRun((payload ?? {}) as StartRunRequest),
+      resume: (payload) => agentRuntime.resumeRun((payload ?? {}) as ResumeRunRequest),
+      cancel: (payload) => {
+        const p = (payload ?? {}) as { runId?: string; reason?: 'user' | 'timeout' | 'replaced' };
+        return agentRuntime.cancelRun(agentRunId(payload), p.reason ?? 'user');
+      },
+      listRuns: (payload) =>
+        agentRuntime.listRuns(
+          typeof payload === 'object' && payload !== null ? (payload as AgentRunsListRequest) : undefined
+        ),
+      getRun: (payload) => agentRuntime.getRun(agentRunId(payload)),
+      getEvents: (payload) => agentRuntime.getEvents((payload ?? {}) as EventsPageRequest),
+      memoryList: () => ({ ok: true, data: listMemoryView(getDb()) }),
+      memorySettle: () => {
+        try {
+          return { ok: true, data: settleDueMemory(getDb(), persist) };
+        } catch (err) {
+          return {
+            ok: false,
+            code: 'E_DB',
+            message: `结算失败: ${err instanceof Error ? err.message : String(err)}`
+          };
+        }
+      }
+    },
     runDashboard: async () => ({
       ok: true,
       data: loadDashboardSnapshot(getDb(), {

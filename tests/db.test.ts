@@ -30,13 +30,23 @@ describe('database', () => {
     expect(tables).toContain('article_entity');
   });
 
-  it('写入 schema_version = 10 且存在 insight/causal_chain/stock_group/stock_alert 表', () => {
+  it('写入 schema_version = 14 且存在 agent_* 表与既有业务表', () => {
     const stmt = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`);
     const has = stmt.step();
     const row = stmt.getAsObject() as { value: string };
     stmt.free();
     expect(has).toBe(true);
-    expect(row.value).toBe('10');
+    expect(row.value).toBe('14');
+    // P4：图草稿/发布状态、spec 摘要与 run 绑定摘要。
+    const graphCols = db.exec(`PRAGMA table_info(agent_graph)`);
+    const gcols = graphCols[0] ? graphCols[0].values.map((r) => r[1] as string) : [];
+    expect(gcols).toContain('status');
+    expect(gcols).toContain('digest');
+    const runCols = db.exec(`PRAGMA table_info(agent_run)`);
+    const rcols = runCols[0] ? runCols[0].values.map((r) => r[1] as string) : [];
+    expect(rcols).toContain('graph_digest');
+    // P5：审批挂起快照列（跨进程重启恢复）。
+    expect(rcols).toContain('suspend_json');
     // 验证 hot_score 列存在
     const colRes = db.exec(`PRAGMA table_info(source_article)`);
     const cols = colRes[0] ? colRes[0].values.map((r) => r[1] as string) : [];
@@ -45,6 +55,24 @@ describe('database', () => {
       const res = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`);
       expect(res.length).toBeGreaterThan(0);
     }
+    const agentTables = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name IN ('agent_graph','agent_run','agent_run_event','agent_node_result','agent_decision','agent_memory')`
+    );
+    const names = agentTables[0] ? agentTables[0].values.flat() : [];
+    expect(names).toHaveLength(6);
+
+    // P3：baseline_json 字段、insufficient 状态与 memory 唯一索引。
+    const decisionCols = db.exec(`PRAGMA table_info(agent_decision)`);
+    const dcols = decisionCols[0] ? decisionCols[0].values.map((r) => r[1] as string) : [];
+    expect(dcols).toContain('baseline_json');
+    const decisionSql = db.exec(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_decision'`
+    )[0]?.values[0]?.[0] as string;
+    expect(decisionSql).toContain('insufficient');
+    const idx = db.exec(
+      `SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_agent_memory_decision'`
+    )[0]?.values[0]?.[0] as string;
+    expect(idx).toContain('UNIQUE');
   });
 
   it('saveDatabase 落盘后可重开读回（本地缓存契约）', async () => {
