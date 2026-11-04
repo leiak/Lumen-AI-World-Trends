@@ -43,7 +43,7 @@ function expectOk<T>(res: AgentIpcResponse<T>): T {
 function makeRuntime(
   db: Database,
   provider: AiProvider,
-  opts?: { persist?: () => void; send?: (e: RunEventEnvelope) => void; ids?: string[] }
+  opts?: { persist?: () => void; send?: (e: RunEventEnvelope) => void; ids?: string[]; now?: () => string }
 ): AgentRuntime {
   let i = 0;
   return new AgentRuntime({
@@ -52,13 +52,19 @@ function makeRuntime(
     mockProvider: new MockProvider(),
     persist: opts?.persist ?? (() => {}),
     send: opts?.send,
-    now: () => NOW,
+    now: opts?.now ?? (() => NOW),
     newRunId: () => {
       const fixed = opts?.ids?.[i];
       i += 1;
       return fixed ?? `run_test_${i}`;
     }
   });
+}
+
+/** 每次取时间 +1s，便于断言“发言时间来自该节点尝试、结束不早于开始”。 */
+function tickingClock(startIso = NOW): () => string {
+  let t = new Date(startIso).getTime();
+  return () => new Date((t += 1000)).toISOString();
 }
 
 function request(overrides?: Partial<StartRunRequest>): StartRunRequest {
@@ -157,7 +163,7 @@ describe('agent runtime', () => {
         return new MockProvider().generate(messages);
       }
     };
-    const runtime = makeRuntime(db, recording);
+    const runtime = makeRuntime(db, recording, { now: tickingClock() });
     runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
 
     const started = expectOk(await runtime.startRun(request({ options: { forceMock: false } })));
@@ -184,6 +190,17 @@ describe('agent runtime', () => {
     ]);
     expect(risk.map((e) => (e.event.type === 'risk.turn' ? e.event.count : 0))).toEqual([1, 2, 3]);
     expect(risk.every((e) => e.event.type === 'risk.turn' && e.event.round === 1)).toBe(true);
+
+    // P8：运行中的发言事件即带该节点尝试的真实开始/结束时间（与落库同源）。
+    const turnEvents = [...debate, ...risk].map((e) => {
+      if (e.event.type !== 'debate.turn' && e.event.type !== 'risk.turn') throw new Error('unexpected event');
+      return e.event;
+    });
+    for (const turn of turnEvents) {
+      expect(typeof turn.startedAt).toBe('string');
+      expect(typeof turn.endedAt).toBe('string');
+      expect(new Date(turn.endedAt!).getTime()).toBeGreaterThanOrEqual(new Date(turn.startedAt!).getTime());
+    }
 
     const routes = page.events.filter((e) => e.event.type === 'route.taken');
     expect(routes).toHaveLength(7);
@@ -250,6 +267,20 @@ describe('agent runtime', () => {
     expect(bearResults).toHaveLength(2);
     expect((bullResults[0].output as { argument: string }).argument).toContain('[Mock 第1轮]');
     expect((bullResults[1].output as { argument: string }).argument).toContain('[Mock 第2轮]');
+
+    // P8：历史回放（getRun 读 state_json）同样能拿到时间，且与运行中事件一致。
+    const turnEntry = { entries: [] as Array<{ startedAt?: string; endedAt?: string }> };
+    const debateState = detail.state?.debate as typeof turnEntry | undefined;
+    const riskState = detail.state?.risk as typeof turnEntry | undefined;
+    expect(debateState?.entries).toHaveLength(4);
+    expect(riskState?.entries).toHaveLength(3);
+    for (const entry of [...(debateState?.entries ?? []), ...(riskState?.entries ?? [])]) {
+      expect(typeof entry.startedAt).toBe('string');
+      expect(typeof entry.endedAt).toBe('string');
+    }
+    expect(debateState?.entries[0].startedAt).toBe(
+      debate[0].event.type === 'debate.turn' ? debate[0].event.startedAt : undefined
+    );
     db.close();
   });
 

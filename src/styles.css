@@ -504,6 +504,12 @@ button.agent-editor-locate:hover { border-color: var(--accent-2); }
 .agent-debate-item.speaker-bear { border-left-color: var(--accent); }
 .agent-debate-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
 .agent-debate-round { font-size: 12px; color: var(--text-dim); }
+.agent-turn-time {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
 .agent-debate-speaker { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
 .agent-debate-speaker.bull { color: var(--ok); border-color: var(--ok); }
 .agent-debate-speaker.bear { color: var(--accent); border-color: var(--accent); }

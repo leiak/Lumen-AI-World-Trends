@@ -18,8 +18,8 @@ export interface GraphRunHooks {
   onNodeStarted(node: GraphNodeSpec, attempt: number, inputSummary: string): void;
   onNodeCompleted(node: GraphNodeSpec, output: JsonObject, elapsedMs: number, attempt: number): void;
   onNodeFailed(node: GraphNodeSpec, error: unknown, elapsedMs: number, attempt: number): void;
-  onDebateTurn(node: GraphNodeSpec, entry: DebateEntry, count: number, maxRounds: number): void;
-  onRiskTurn(node: GraphNodeSpec, entry: RiskEntry, count: number, maxRounds: number): void;
+  onDebateTurn(node: GraphNodeSpec, entry: DebateEntry, count: number, maxRounds: number, attempt: number): void;
+  onRiskTurn(node: GraphNodeSpec, entry: RiskEntry, count: number, maxRounds: number, attempt: number): void;
   onRouteTaken(from: string, to: string, condition: string, edgeId: string): void;
   checkCanceled(): void;
   /** P5：在节点执行的异步上下文中运行，供 token 流式事件定位到具体节点。 */
@@ -147,14 +147,14 @@ export function compileAgentGraph(
           const debate = result.debate as DebateState | undefined;
           const entry = debate?.entries[debate.entries.length - 1];
           if (entry) {
-            hooks.onDebateTurn(node, entry, debate!.count, spec.settings.maxDebateRounds);
+            hooks.onDebateTurn(node, entry, debate!.count, spec.settings.maxDebateRounds, attempt);
           }
         }
         if (RISK_TYPES.has(node.type)) {
           const risk = result.risk as RiskDebateState | undefined;
           const entry = risk?.entries[risk.entries.length - 1];
           if (entry) {
-            hooks.onRiskTurn(node, entry, risk!.count, spec.settings.maxRiskRounds);
+            hooks.onRiskTurn(node, entry, risk!.count, spec.settings.maxRiskRounds, attempt);
           }
         }
         return result;

@@ -116,6 +116,9 @@ interface Execution {
   checkpointSaver?: SqlJsCheckpointSaver;
   /** 最近一次 node.started，用于 interrupt 时把挂起节点标为 skipped。 */
   lastStarted: { nodeId: string; attempt: number; startedMs: number } | null;
+  /** 按 `${nodeId}:${attempt}` 缓存本次尝试的真实 startedAt / endedAt，
+   *  供 debate.turn / risk.turn 事件复用，避免与落库时间不一致。 */
+  nodeTimes: Map<string, { startedAt: string; endedAt?: string }>;
 }
 
 export interface AgentRuntimeDeps {
@@ -929,7 +932,8 @@ export class AgentRuntime {
       startedAtMs: Date.now(),
       deadline: Date.now() + (options.timeoutMs ?? 600000),
       ctx,
-      lastStarted: null
+      lastStarted: null,
+      nodeTimes: new Map()
     } as unknown as Execution;
     execution.bus = new RunEventBus({
       runId,
@@ -1011,7 +1015,8 @@ export class AgentRuntime {
       // 审批等待时长不计入超时预算，恢复后重新计时。
       deadline: Date.now() + (snap.options.timeoutMs ?? 600000),
       ctx,
-      lastStarted: null
+      lastStarted: null,
+      nodeTimes: new Map()
     } as unknown as Execution;
     execution.bus = new RunEventBus({
       runId,
@@ -1144,13 +1149,15 @@ export class AgentRuntime {
       checkCanceled: this.createCheckCanceled(execution),
       withNodeContext: (node, attempt, fn) => this.nodeContext.run({ nodeId: node.id, attempt }, fn),
       onNodeStarted: (node: GraphNodeSpec, attempt, inputSummary) => {
+        const startedAt = this.now();
+        execution.nodeTimes.set(`${node.id}:${attempt}`, { startedAt });
         execution.lastStarted = { nodeId: node.id, attempt, startedMs: Date.now() };
         this.repo.startNode({
           runId,
           nodeId: node.id,
           nodeType: node.type,
           attempt,
-          startedAt: this.now(),
+          startedAt,
           inputSummary
         });
         execution.bus.emit({
@@ -1161,13 +1168,16 @@ export class AgentRuntime {
         });
       },
       onNodeCompleted: (node, output, elapsedMs, attempt) => {
+        const endedAt = this.now();
+        const times = execution.nodeTimes.get(`${node.id}:${attempt}`);
+        if (times) times.endedAt = endedAt;
         execution.lastStarted = null;
         this.repo.finishNode({
           runId,
           nodeId: node.id,
           attempt,
           status: 'succeeded',
-          endedAt: this.now(),
+          endedAt,
           elapsedMs,
           output
         });
@@ -1182,6 +1192,9 @@ export class AgentRuntime {
         this.repo.updateRunUsage(runId, execution.usage);
       },
       onNodeFailed: (node, err, elapsedMs, attempt) => {
+        const endedAt = this.now();
+        const times = execution.nodeTimes.get(`${node.id}:${attempt}`);
+        if (times) times.endedAt = endedAt;
         execution.lastStarted = null;
         const info = extractAgentError(err);
         this.repo.finishNode({
@@ -1189,7 +1202,7 @@ export class AgentRuntime {
           nodeId: node.id,
           attempt,
           status: 'failed',
-          endedAt: this.now(),
+          endedAt,
           elapsedMs,
           errorCode: info.code,
           errorMessage: info.message
@@ -1203,7 +1216,8 @@ export class AgentRuntime {
         });
         this.repo.updateRunUsage(runId, execution.usage);
       },
-      onDebateTurn: (node, entry, count, maxRounds) => {
+      onDebateTurn: (node, entry, count, maxRounds, attempt) => {
+        const turnTimes = execution.nodeTimes.get(`${node.id}:${attempt}`);
         execution.bus.emit({
           type: 'debate.turn',
           nodeId: node.id,
@@ -1214,10 +1228,13 @@ export class AgentRuntime {
           evidenceRefs: entry.evidenceRefs,
           confidence: entry.confidence,
           count,
-          maxRounds
+          maxRounds,
+          ...(turnTimes?.startedAt ? { startedAt: turnTimes.startedAt } : {}),
+          ...(turnTimes?.endedAt ? { endedAt: turnTimes.endedAt } : {})
         });
       },
-      onRiskTurn: (node, entry, count, maxRounds) => {
+      onRiskTurn: (node, entry, count, maxRounds, attempt) => {
+        const turnTimes = execution.nodeTimes.get(`${node.id}:${attempt}`);
         execution.bus.emit({
           type: 'risk.turn',
           nodeId: node.id,
@@ -1228,7 +1245,9 @@ export class AgentRuntime {
           residualRisks: entry.residualRisks,
           confidence: entry.confidence,
           count,
-          maxRounds
+          maxRounds,
+          ...(turnTimes?.startedAt ? { startedAt: turnTimes.startedAt } : {}),
+          ...(turnTimes?.endedAt ? { endedAt: turnTimes.endedAt } : {})
         });
       },
       onRouteTaken: (from, to, condition, edgeId) => {

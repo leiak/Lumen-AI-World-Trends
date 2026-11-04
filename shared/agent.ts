@@ -273,6 +273,9 @@ export interface DebateTurn {
 /** 单次发言记录：在 DebateTurn 上附加轮次，供 judge 与 UI 消费。 */
 export interface DebateEntry extends DebateTurn {
   round: number;
+  /** 该发言所在节点尝试的真实开始/结束时间；历史回放由节点结果补齐，不单独存列。 */
+  startedAt?: string;
+  endedAt?: string;
 }
 
 /** 辩论状态整体覆盖（不允许部分更新）。 */
@@ -313,6 +316,9 @@ export interface RiskTurn {
 
 export interface RiskEntry extends RiskTurn {
   round: number;
+  /** 与 DebateEntry 一致：复用节点尝试的 started_at / ended_at。 */
+  startedAt?: string;
+  endedAt?: string;
 }
 
 /** 三方风控辩论状态，整对象覆盖。 */
@@ -674,6 +680,9 @@ export type RunEvent =
       confidence: number;
       count: number;
       maxRounds: number;
+      /** 与落库的 started_at / ended_at 同源，保证运行中与历史回放显示一致。 */
+      startedAt?: string;
+      endedAt?: string;
     }
   /** 风控发言事件：node.completed 之后、route.taken 之前发出。 */
   | {
@@ -687,6 +696,8 @@ export type RunEvent =
       confidence: number;
       count: number;
       maxRounds: number;
+      startedAt?: string;
+      endedAt?: string;
     }
   /** condition 是人类可读标签；edgeId 用于把路由定位到具体边。 */
   | { type: 'route.taken'; from: string; to: string; condition: string; edgeId?: string }

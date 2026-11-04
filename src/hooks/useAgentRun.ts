@@ -202,7 +202,9 @@ function applyEvent(state: AgentRunViewState, env: RunEventEnvelope): AgentRunVi
         argument: event.argument,
         rebuttals: event.rebuttals,
         evidenceRefs: event.evidenceRefs,
-        confidence: event.confidence
+        confidence: event.confidence,
+        ...(event.startedAt ? { startedAt: event.startedAt } : {}),
+        ...(event.endedAt ? { endedAt: event.endedAt } : {})
       };
       // afterSeq 补拉或重放时按“轮次 + 立场”去重，避免历史重复。
       const entries = state.debate.entries.filter(
@@ -225,7 +227,9 @@ function applyEvent(state: AgentRunViewState, env: RunEventEnvelope): AgentRunVi
         challenge: event.challenge,
         mitigations: event.mitigations,
         residualRisks: event.residualRisks,
-        confidence: event.confidence
+        confidence: event.confidence,
+        ...(event.startedAt ? { startedAt: event.startedAt } : {}),
+        ...(event.endedAt ? { endedAt: event.endedAt } : {})
       };
       const entries = state.risk.entries.filter(
         (e) => !(e.round === entry.round && e.stance === entry.stance)

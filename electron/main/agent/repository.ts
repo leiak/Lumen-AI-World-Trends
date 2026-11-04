@@ -14,11 +14,13 @@ import type {
   AgentRunSummary,
   AgentSubject,
   ApprovalContext,
+  DebateState,
   FinalDecision,
   GraphNodeSpec,
   GraphSpec,
   MemoryInjection,
   ObservationPlan,
+  RiskDebateState,
   RunEventEnvelope,
   RunOptions,
   RunUsage,
@@ -105,6 +107,51 @@ function toNodeView(r: Row): AgentNodeResultView {
     errorCode: (str(r.error_code) as AgentErrorCode | undefined) ?? undefined,
     errorMessage: str(r.error_message)
   };
+}
+
+/** 辩论/风控发言本身不带时间列：展示用时间从节点尝试的 started_at / ended_at 补齐。
+ *  同一发言节点按时间顺序的第 k 次尝试对应该节点的第 k 条发言。 */
+function attachTurnTimes<T extends { round: number; stance: string; startedAt?: string; endedAt?: string }>(
+  entries: T[],
+  nodes: AgentNodeResultView[],
+  nodeIdForStance: (stance: string) => string
+): T[] {
+  const byNode = new Map<string, AgentNodeResultView[]>();
+  for (const node of nodes) {
+    const list = byNode.get(node.nodeId) ?? [];
+    list.push(node);
+    byNode.set(node.nodeId, list);
+  }
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const index = seen.get(entry.stance) ?? 0;
+    seen.set(entry.stance, index + 1);
+    const target = byNode.get(nodeIdForStance(entry.stance))?.[index];
+    const startedAt = entry.startedAt ?? target?.startedAt;
+    const endedAt = entry.endedAt ?? target?.endedAt;
+    return {
+      ...entry,
+      ...(startedAt ? { startedAt } : {}),
+      ...(endedAt ? { endedAt } : {})
+    };
+  });
+}
+
+/** 终态 state_json 只存发言内容；读取时补上时间，历史回放与运行中事件保持一致。 */
+function attachStateTurnTimes(
+  state: Record<string, unknown> | undefined,
+  nodes: AgentNodeResultView[]
+): Record<string, unknown> | undefined {
+  if (!state) return state;
+  const debate = state.debate as DebateState | undefined;
+  if (debate && Array.isArray(debate.entries)) {
+    state.debate = { ...debate, entries: attachTurnTimes(debate.entries, nodes, (stance) => stance) };
+  }
+  const risk = state.risk as RiskDebateState | undefined;
+  if (risk && Array.isArray(risk.entries)) {
+    state.risk = { ...risk, entries: attachTurnTimes(risk.entries, nodes, (stance) => `risk_${stance}`) };
+  }
+  return state;
 }
 
 export interface RunInsert {
@@ -826,7 +873,10 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       const decisionRow = one(db, 'SELECT * FROM agent_decision WHERE run_id = ? ORDER BY created_at DESC LIMIT 1', [
         runId
       ]);
-      const state = readJson<Record<string, unknown> | undefined>(row.state_json, undefined);
+      const state = attachStateTurnTimes(
+        readJson<Record<string, unknown> | undefined>(row.state_json, undefined),
+        nodes
+      );
       // state_json 里的 decision 保留完整字段（含 reviewReason）；agent_decision 用于结算与查询，
       // 缺少 state 时再从该表还原。
       const stateDecision = state?.decision as FinalDecision | undefined;

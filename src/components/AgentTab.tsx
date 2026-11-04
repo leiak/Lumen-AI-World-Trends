@@ -34,6 +34,20 @@ function ratingClass(rating?: TrendRating): string {
   return rating ? `rating-${rating}` : '';
 }
 
+/** 发言时间：优先该节点尝试的开始时间（与落库 started_at 同源）。
+ *  与运行历史一致按 ISO 时间直读（UTC）；跨天时补上 MM-DD，避免只看到同一天内的小时。 */
+function formatTurnTime(entry: { startedAt?: string; endedAt?: string }): string | undefined {
+  const iso = entry.startedAt ?? entry.endedAt;
+  if (!iso) return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(iso);
+  if (!m) return undefined;
+  const hms = `${m[4]}:${m[5]}:${m[6]}`;
+  const today = new Date();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const todayKey = `${today.getUTCFullYear()}-${pad(today.getUTCMonth() + 1)}-${pad(today.getUTCDate())}`;
+  return `${m[1]}-${m[2]}-${m[3]}` === todayKey ? hms : `${m[2]}-${m[3]} ${hms}`;
+}
+
 export default function AgentTab() {
   const { t } = useI18n();
   const {
@@ -564,37 +578,49 @@ export default function AgentTab() {
         </div>
         {state.debate.entries.length > 0 ? (
           <ol className="agent-debate-list" data-testid="agent-debate-list">
-            {state.debate.entries.map((entry) => (
-              <li
-                key={`${entry.round}-${entry.stance}`}
-                className={`agent-debate-item speaker-${entry.stance}`}
-                data-testid="agent-debate-item"
-                data-stance={entry.stance}
-                data-round={entry.round}
-              >
-                <div className="agent-debate-item-head">
-                  <span className="agent-debate-round">
-                    {t('agent.debate.round', { round: entry.round })}
-                  </span>
-                  <span className={`agent-debate-speaker ${entry.stance}`}>
-                    {t(entry.stance === 'bull' ? 'agent.debate.bull' : 'agent.debate.bear')}
-                  </span>
-                  <span className="muted">
-                    {t('agent.debate.confidence', { value: (entry.confidence * 100).toFixed(0) })}
-                  </span>
-                </div>
-                <p className="agent-debate-argument">{entry.argument}</p>
-                {entry.rebuttals.length > 0 ? (
-                  <ul className="agent-debate-rebuttals">
-                    {entry.rebuttals.map((r, i) => (
-                      <li key={`${r.target}-${i}`}>
-                        {r.target}：{r.point}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </li>
-            ))}
+            {state.debate.entries.map((entry) => {
+              const turnTime = formatTurnTime(entry);
+              return (
+                <li
+                  key={`${entry.round}-${entry.stance}`}
+                  className={`agent-debate-item speaker-${entry.stance}`}
+                  data-testid="agent-debate-item"
+                  data-stance={entry.stance}
+                  data-round={entry.round}
+                >
+                  <div className="agent-debate-item-head">
+                    <span className="agent-debate-round">
+                      {t('agent.debate.round', { round: entry.round })}
+                    </span>
+                    <span className={`agent-debate-speaker ${entry.stance}`}>
+                      {t(entry.stance === 'bull' ? 'agent.debate.bull' : 'agent.debate.bear')}
+                    </span>
+                    <span className="muted">
+                      {t('agent.debate.confidence', { value: (entry.confidence * 100).toFixed(0) })}
+                    </span>
+                    {turnTime ? (
+                      <time
+                        className="agent-turn-time"
+                        data-testid="agent-debate-time"
+                        dateTime={entry.startedAt ?? entry.endedAt}
+                      >
+                        {turnTime}
+                      </time>
+                    ) : null}
+                  </div>
+                  <p className="agent-debate-argument">{entry.argument}</p>
+                  {entry.rebuttals.length > 0 ? (
+                    <ul className="agent-debate-rebuttals">
+                      {entry.rebuttals.map((r, i) => (
+                        <li key={`${r.target}-${i}`}>
+                          {r.target}：{r.point}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         ) : (
           <p className="muted">{t('agent.debate.empty')}</p>
@@ -617,43 +643,59 @@ export default function AgentTab() {
           )}
         </div>
         {state.risk.entries.length > 0 ? (
-          <ol className="agent-debate-list">
-            {state.risk.entries.map((entry) => (
-              <li key={`${entry.round}-${entry.stance}`} className={`agent-debate-item risk-${entry.stance}`}>
-                <div className="agent-debate-item-head">
-                  <span className="agent-debate-round">
-                    {t('agent.risk.round', { round: entry.round })}
-                  </span>
-                  <span className={`agent-debate-speaker ${entry.stance}`}>
-                    {t(`agent.risk.${entry.stance}` as I18nKey)}
-                  </span>
-                  <span className="muted">
-                    {t('agent.debate.confidence', { value: (entry.confidence * 100).toFixed(0) })}
-                  </span>
-                </div>
-                <p className="agent-debate-argument">{entry.challenge}</p>
-                {entry.mitigations.length > 0 ? (
-                  <div className="agent-risk-lines">
-                    <strong>{t('agent.risk.mitigations')}</strong>
-                    <ul>
-                      {entry.mitigations.map((m, i) => (
-                        <li key={`${m}-${i}`}>{m}</li>
-                      ))}
-                    </ul>
+          <ol className="agent-debate-list" data-testid="agent-risk-list">
+            {state.risk.entries.map((entry) => {
+              const turnTime = formatTurnTime(entry);
+              return (
+                <li
+                  key={`${entry.round}-${entry.stance}`}
+                  className={`agent-debate-item risk-${entry.stance}`}
+                  data-testid="agent-risk-item"
+                >
+                  <div className="agent-debate-item-head">
+                    <span className="agent-debate-round">
+                      {t('agent.risk.round', { round: entry.round })}
+                    </span>
+                    <span className={`agent-debate-speaker ${entry.stance}`}>
+                      {t(`agent.risk.${entry.stance}` as I18nKey)}
+                    </span>
+                    <span className="muted">
+                      {t('agent.debate.confidence', { value: (entry.confidence * 100).toFixed(0) })}
+                    </span>
+                    {turnTime ? (
+                      <time
+                        className="agent-turn-time"
+                        data-testid="agent-risk-time"
+                        dateTime={entry.startedAt ?? entry.endedAt}
+                      >
+                        {turnTime}
+                      </time>
+                    ) : null}
                   </div>
-                ) : null}
-                {entry.residualRisks.length > 0 ? (
-                  <div className="agent-risk-lines">
-                    <strong>{t('agent.risk.residual')}</strong>
-                    <ul>
-                      {entry.residualRisks.map((m, i) => (
-                        <li key={`${m}-${i}`}>{m}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </li>
-            ))}
+                  <p className="agent-debate-argument">{entry.challenge}</p>
+                  {entry.mitigations.length > 0 ? (
+                    <div className="agent-risk-lines">
+                      <strong>{t('agent.risk.mitigations')}</strong>
+                      <ul>
+                        {entry.mitigations.map((m, i) => (
+                          <li key={`${m}-${i}`}>{m}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {entry.residualRisks.length > 0 ? (
+                    <div className="agent-risk-lines">
+                      <strong>{t('agent.risk.residual')}</strong>
+                      <ul>
+                        {entry.residualRisks.map((m, i) => (
+                          <li key={`${m}-${i}`}>{m}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         ) : (
           <p className="muted">{t('agent.risk.empty')}</p>
