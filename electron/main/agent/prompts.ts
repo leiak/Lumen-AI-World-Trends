@@ -13,6 +13,7 @@ import type {
 import type { TrendsResult } from '../../../shared/trend.js';
 import type { SourceArticle } from '../../../shared/models.js';
 import type { ChatMessage } from '../ai/provider.js';
+import { composeCustomSystem, type PromptRenderVars } from './prompt-policy.js';
 
 const MAX_ARTICLE_TITLE = 200;
 const MAX_ARTICLE_BODY = 600;
@@ -68,15 +69,19 @@ export function buildEvidencePrompt(
   asOf: string,
   trends: TrendsResult,
   articles: SourceArticle[],
-  memoryContext?: string
+  memoryContext?: string,
+  systemOverride?: string
 ): ChatMessage[] {
-  const system = [
-    '你是「世界趋势取证分析师」，负责热度动量取证。',
-    UNTRUSTED_RULE,
-    '只使用给定数据；区分事实与推断；数据缺失必须写入 dataGaps，不得把缺失当作“没有发生”。',
-    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-    '{"dimension":"heat","summary":"不超过300字","signals":[{"claim":"","direction":"up|down|flat","strength":1|2|3,"sourceIds":["raw_hash"]}],"dataGaps":[""],"confidence":0到1}'
-  ].join('\n');
+  const vars: PromptRenderVars = { subject, asOf, memoryContext };
+  const system = systemOverride
+    ? composeCustomSystem('evidence', systemOverride, vars)
+    : [
+        '你是「世界趋势取证分析师」，负责热度动量取证。',
+        UNTRUSTED_RULE,
+        '只使用给定数据；区分事实与推断；数据缺失必须写入 dataGaps，不得把缺失当作“没有发生”。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        '{"dimension":"heat","summary":"不超过300字","signals":[{"claim":"","direction":"up|down|flat","strength":1|2|3,"sourceIds":["raw_hash"]}],"dataGaps":[""],"confidence":0到1}'
+      ].join('\n');
   const user = [
     subjectLine(subject),
     `时间边界 asOf=${asOf}（只可引用该时间之前的数据）`,
@@ -112,18 +117,30 @@ export function buildDebatePrompt(
   debate: DebateState,
   opponentLatest: DebateEntry | undefined,
   round: number,
-  maxRounds: number
+  maxRounds: number,
+  systemOverride?: string
 ): ChatMessage[] {
   const role = stance === 'bull' ? '多头研究员' : '空头研究员';
   const stanceText = stance === 'bull' ? '看多（趋势延续/升温）' : '看空（趋势反转/噪声）';
-  const system = [
-    `你是「${role}」，立场固定为${stanceText}，不得中立。`,
-    UNTRUSTED_RULE,
-    '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
-    '这是计数制辩论：轮次由系统控制，你只需完成本次发言，不要声称“辩论结束”。',
-    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-    `{"stance":"${stance}","argument":"不超过250字","rebuttals":[{"target":"","point":""}],"evidenceRefs":["sourceId"],"confidence":0到1}`
-  ].join('\n');
+  const evidenceText = reports
+    .map((r) => `- [${r.dimension}] ${r.summary}（置信度 ${r.confidence}，缺口: ${r.dataGaps.join('; ') || '无'}）`)
+    .join('\n');
+  const vars: PromptRenderVars = {
+    subject,
+    asOf,
+    round,
+    evidenceSummary: evidenceText
+  };
+  const system = systemOverride
+    ? composeCustomSystem(stance, systemOverride, vars)
+    : [
+        `你是「${role}」，立场固定为${stanceText}，不得中立。`,
+        UNTRUSTED_RULE,
+        '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
+        '这是计数制辩论：轮次由系统控制，你只需完成本次发言，不要声称“辩论结束”。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        `{"stance":"${stance}","argument":"不超过250字","rebuttals":[{"target":"","point":""}],"evidenceRefs":["sourceId"],"confidence":0到1}`
+      ].join('\n');
   const evidence = reports
     .map((r) => `- [${r.dimension}] ${r.summary}（置信度 ${r.confidence}，缺口: ${r.dataGaps.join('; ') || '无'}）`)
     .join('\n');
@@ -164,7 +181,8 @@ export function buildRiskPrompt(
   risk: RiskDebateState,
   latestOthers: RiskEntry[],
   round: number,
-  maxRounds: number
+  maxRounds: number,
+  systemOverride?: string
 ): ChatMessage[] {
   const role =
     stance === 'aggressive' ? '激进风控' : stance === 'conservative' ? '保守风控' : '中性风控';
@@ -174,15 +192,24 @@ export function buildRiskPrompt(
       : stance === 'conservative'
         ? '优先指出“误判风险、数据缺口、样本偏差”，要求可执行的保护条件。'
         : '平衡双方，检查论据是否被极端化，并要求补齐关键缺口。';
-  const system = [
-    `你是「${role}」，立场固定为${riskLabel(stance)}，必须挑战其他两方的结论，不得附和。`,
-    UNTRUSTED_RULE,
-    mandate,
-    '这是计数制风控辩论：轮次由系统控制，你只需完成本次发言，不要声称“风控结束”。',
-    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-    `{"stance":"${stance}","challenge":"不超过250字","mitigations":[""],"residualRisks":[""],"confidence":0到1}`
-  ].join('\n');
   const debateText = debate.map((e) => `- ${debateEntryText(e)}`).join('\n');
+  const roleKey = stance === 'aggressive' ? 'risk_aggressive' : stance === 'conservative' ? 'risk_conservative' : 'risk_neutral';
+  const vars: PromptRenderVars = {
+    subject,
+    asOf,
+    round,
+    evidenceSummary: debateText
+  };
+  const system = systemOverride
+    ? composeCustomSystem(roleKey, systemOverride, vars)
+    : [
+        `你是「${role}」，立场固定为${riskLabel(stance)}，必须挑战其他两方的结论，不得附和。`,
+        UNTRUSTED_RULE,
+        mandate,
+        '这是计数制风控辩论：轮次由系统控制，你只需完成本次发言，不要声称“风控结束”。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        `{"stance":"${stance}","challenge":"不超过250字","mitigations":[""],"residualRisks":[""],"confidence":0到1}`
+      ].join('\n');
   const history = risk.entries.map((e) => `- ${riskEntryText(e)}`).join('\n');
   const others = latestOthers
     .map((e) => `- ${riskLabel(e.stance)}（第${e.round}轮）：${e.challenge}`)
@@ -210,15 +237,23 @@ export function buildPlannerPrompt(
   decision: FinalDecision | undefined,
   debate: DebateEntry[],
   risk: RiskEntry[],
-  maxTriggers: number
+  maxTriggers: number,
+  systemOverride?: string
 ): ChatMessage[] {
-  const system = [
-    '你是「观察方案规划者」，把裁决与三方风控结论翻译成可执行的观察/预警方案。',
-    UNTRUSTED_RULE,
-    '不做交易指令、不给仓位；只给观察动作、触发条件、失效条件与复核周期。',
-    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-    `{"action":"watch|alert|escalate|dismiss","summary":"不超过300字","triggers":["最多${maxTriggers}条"],"invalidations":[""],"reviewInDays":1到30}`
-  ].join('\n');
+  const vars: PromptRenderVars = {
+    subject,
+    asOf,
+    evidenceSummary: debate.map((e) => `- ${debateEntryText(e)}`).join('\n')
+  };
+  const system = systemOverride
+    ? composeCustomSystem('planner', systemOverride, vars)
+    : [
+        '你是「观察方案规划者」，把裁决与三方风控结论翻译成可执行的观察/预警方案。',
+        UNTRUSTED_RULE,
+        '不做交易指令、不给仓位；只给观察动作、触发条件、失效条件与复核周期。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        `{"action":"watch|alert|escalate|dismiss","summary":"不超过300字","triggers":["最多${maxTriggers}条"],"invalidations":[""],"reviewInDays":1到30}`
+      ].join('\n');
   const debateText = debate.map((e) => `- ${debateEntryText(e)}`).join('\n');
   const riskText = risk
     .map((e) => `- 第${e.round}轮 ${riskLabel(e.stance)}：${e.challenge}；缓解 ${e.mitigations.join('; ') || '无'}；残余 ${e.residualRisks.join('; ') || '无'}`)
@@ -244,16 +279,25 @@ export function buildFinalPrompt(
   proposal: ObservationPlan | undefined,
   debate: DebateEntry[],
   risk: RiskEntry[],
-  memoryContext?: string
+  memoryContext?: string,
+  systemOverride?: string
 ): ChatMessage[] {
-  const system = [
-    '你是「最终结论签署者」，在人工审批前给出唯一最终评级与理由。',
-    UNTRUSTED_RULE,
-    '必须消费裁决、观察方案、多空辩论与三方风控；风控提出的残余风险必须体现在 keyRisks。',
-    '评级枚举：strong_up | up | neutral | down | strong_down | review。只有在证据确实无法支撑方向时才用 review。',
-    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-    '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选"}'
-  ].join('\n');
+  const vars: PromptRenderVars = {
+    subject,
+    asOf,
+    memoryContext,
+    evidenceSummary: debate.map((e) => `- ${debateEntryText(e)}`).join('\n')
+  };
+  const system = systemOverride
+    ? composeCustomSystem('final', systemOverride, vars)
+    : [
+        '你是「最终结论签署者」，在人工审批前给出唯一最终评级与理由。',
+        UNTRUSTED_RULE,
+        '必须消费裁决、观察方案、多空辩论与三方风控；风控提出的残余风险必须体现在 keyRisks。',
+        '评级枚举：strong_up | up | neutral | down | strong_down | review。只有在证据确实无法支撑方向时才用 review。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选"}'
+      ].join('\n');
   const debateText = debate.map((e) => `- ${debateEntryText(e)}`).join('\n');
   const riskText = risk
     .map((e) => `- 第${e.round}轮 ${riskLabel(e.stance)}：${e.challenge}；残余 ${e.residualRisks.join('; ') || '无'}`)
@@ -279,17 +323,26 @@ export function buildJudgePrompt(
   asOf: string,
   reports: EvidenceReport[],
   debate: DebateEntry[],
-  memoryContext?: string
+  memoryContext?: string,
+  systemOverride?: string
 ): ChatMessage[] {
-  const system = [
-    '你是「裁决者」，唯一有权给出趋势方向判断的角色。',
-    UNTRUSTED_RULE,
-    '必须判断多空哪一方论据更强并选边；“存在分歧”本身不是中性理由。',
-    '只有在证据真正均衡时才允许 neutral，且必须在 thesis 中说明均衡依据。',
-    '评级枚举：strong_up | up | neutral | down | strong_down | review。数据不足或无法判断时用 review，并在 reviewReason 说明。',
-    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-    '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选"}'
-  ].join('\n');
+  const vars: PromptRenderVars = {
+    subject,
+    asOf,
+    memoryContext,
+    evidenceSummary: reports.map((r) => `- [${r.dimension}] ${r.summary}`).join('\n')
+  };
+  const system = systemOverride
+    ? composeCustomSystem('judge', systemOverride, vars)
+    : [
+        '你是「裁决者」，唯一有权给出趋势方向判断的角色。',
+        UNTRUSTED_RULE,
+        '必须判断多空哪一方论据更强并选边；“存在分歧”本身不是中性理由。',
+        '只有在证据真正均衡时才允许 neutral，且必须在 thesis 中说明均衡依据。',
+        '评级枚举：strong_up | up | neutral | down | strong_down | review。数据不足或无法判断时用 review，并在 reviewReason 说明。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选"}'
+      ].join('\n');
   const evidence = reports
     .map((r) => `- [${r.dimension}] ${r.summary}（信号 ${r.signals.length} 条，缺口: ${r.dataGaps.join('; ') || '无'}）`)
     .join('\n');

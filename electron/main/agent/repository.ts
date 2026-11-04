@@ -5,7 +5,11 @@ import type {
   AgentGraphSummary,
   AgentGraphVersionSummary,
   AgentNodeResultView,
+  AgentPromptPackSnapshot,
+  AgentPromptPackView,
+  AgentPromptRole,
   AgentRunDetail,
+  AgentRunRecovery,
   AgentRunStatus,
   AgentRunSummary,
   AgentSubject,
@@ -20,7 +24,15 @@ import type {
   RunUsage,
   TrendRating
 } from '../../../shared/agent.js';
+import { PROMPT_MAX_RENDERED_CHARS, PROMPT_MAX_SYSTEM_CHARS, PROMPT_PLACEHOLDERS } from '../../../shared/agent.js';
+import { inspectLatestCheckpoint } from './checkpoint.js';
 import { digestGraphSpec } from './spec.js';
+import {
+  DEFAULT_PROMPT_TEMPLATES,
+  defaultPromptDigest,
+  digestPromptOverrides,
+  normalizePromptOverrides
+} from './prompt-policy.js';
 
 type Row = Record<string, unknown>;
 type SqlParam = string | number | null | Uint8Array;
@@ -62,6 +74,8 @@ function toSummary(r: Row): AgentRunSummary {
     graphId: r.graph_id as string,
     graphVersion: num(r.graph_version, 1),
     graphDigest: str(r.graph_digest),
+    promptVersion: num(r.prompt_version, 0),
+    promptDigest: str(r.prompt_digest),
     status: r.status as AgentRunStatus,
     subject: {
       key: r.subject_key as string,
@@ -104,6 +118,8 @@ export interface RunInsert {
   startedAt: string;
   config: RunOptions;
   model: string;
+  /** P6：运行绑定的 prompt 快照；缺省为内置默认版本 0。 */
+  prompt?: AgentPromptPackSnapshot;
 }
 
 export interface RunTerminal {
@@ -165,6 +181,8 @@ export interface RunSuspendSnapshot {
   attempt: number;
   usage: RunUsage;
   suspendedAt: string;
+  /** P6：跨进程恢复时沿用原 prompt 快照，避免回放串味；旧快照缺省为版本 0。 */
+  prompt?: AgentPromptPackSnapshot;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -202,7 +220,38 @@ export function parseSuspendSnapshot(raw: unknown): RunSuspendSnapshot | null {
   if (!Number.isInteger(value.attempt) || (value.attempt as number) < 1) return null;
   if (!isPlainObject(value.usage)) return null;
   if (typeof value.suspendedAt !== 'string') return null;
+  if (value.prompt !== undefined) {
+    if (!isPlainObject(value.prompt)) return null;
+    const prompt = value.prompt;
+    if (!Number.isInteger(prompt.version) || (prompt.version as number) < 0) return null;
+    if (typeof prompt.digest !== 'string' || prompt.digest.length === 0) return null;
+    if (!isPlainObject(prompt.prompts)) return null;
+  }
   return value as unknown as RunSuspendSnapshot;
+}
+
+/** P7：严格校验断点恢复元数据；缺少任一关键字段都视为不可恢复。 */
+export function parseRunRecovery(raw: unknown): AgentRunRecovery | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(value) || value.v !== 1 || value.kind !== 'checkpoint') return null;
+  if (typeof value.checkpointId !== 'string' || value.checkpointId.length === 0) return null;
+  if (!Number.isInteger(value.checkpointStep)) return null;
+  if (typeof value.graphId !== 'string' || value.graphId.length === 0) return null;
+  if (!Number.isInteger(value.graphVersion) || (value.graphVersion as number) < 1) return null;
+  if (typeof value.graphDigest !== 'string' || value.graphDigest.length === 0) return null;
+  if (!Number.isInteger(value.promptVersion) || (value.promptVersion as number) < 0) return null;
+  if (typeof value.promptDigest !== 'string' || value.promptDigest.length === 0) return null;
+  if (typeof value.threadId !== 'string' || value.threadId.length === 0) return null;
+  if (typeof value.isMock !== 'boolean') return null;
+  if (!isPlainObject(value.usage)) return null;
+  if (typeof value.recoveredAt !== 'string' || !Number.isFinite(Date.parse(value.recoveredAt))) return null;
+  return value as unknown as AgentRunRecovery;
 }
 
 export interface AgentRepository {
@@ -216,14 +265,30 @@ export interface AgentRepository {
   /** 恢复默认图：写入指定版本并设为 active，保留其他历史版本。 */
   restoreDefaultGraph(spec: GraphSpec): AgentGraphRecord;
   countRunsForGraphVersion(graphId: string, version: number): number;
+  /** P6：当前生效的 prompt 版本包；无覆盖时为版本 0 的内置默认。 */
+  getActivePromptPack(): AgentPromptPackView;
+  /** P6：保存新的不可变 prompt 版本包；内容未变化时复用当前版本。 */
+  savePromptPack(prompts: Partial<Record<AgentPromptRole, string>>): AgentPromptPackView;
   insertRun(rec: RunInsert): void;
   updateRunTerminal(rec: RunTerminal): void;
   /** 非终态迁移（interrupted）：保留 ended_at 为空，写入状态快照与已消耗用量。 */
   updateRunInterrupted(runId: string, state: unknown, usage: RunUsage): void;
+  /** P7：节点完成即累加用量，保证续跑不重置预算。 */
+  updateRunUsage(runId: string, usage: RunUsage): void;
+  getRunUsage(runId: string): RunUsage;
   /** P5：写入/读取/清理审批挂起快照。 */
   setRunSuspend(runId: string, snapshotJson: string): void;
   getRunSuspend(runId: string): string | null;
   clearRunSuspend(runId: string): void;
+  /** P7：断点续跑恢复元数据的读写。 */
+  getRunRecovery(runId: string): AgentRunRecovery | null;
+  clearRunRecovery(runId: string): void;
+  /** P7：run 绑定的 prompt 快照（用于恢复时校验版本/摘要）。 */
+  getRunPromptSnapshot(runId: string): AgentPromptPackSnapshot | null;
+  /** P7：各节点已出现的最大 attempt，恢复时新尝试从 +1 开始。 */
+  getNodeAttemptBases(runId: string): Record<string, number>;
+  /** P7：终态/取消后清理该 run 的 checkpoint 线程数据。 */
+  deleteRunCheckpoints(runId: string): void;
   /** P5：重启后把状态改为 running（保留 suspend，终态时清理）。 */
   updateRunResumed(runId: string): void;
   writeEvent(envelope: RunEventEnvelope): void;
@@ -240,6 +305,35 @@ export interface AgentRepository {
 
 /** persist 由调用方注入（主进程用 saveDatabase，测试用空函数）。 */
 export function createAgentRepository(db: Database, persist: () => void): AgentRepository {
+  function promptPackViewFrom(row: Row | null | undefined): AgentPromptPackView {
+    const base = {
+      defaults: DEFAULT_PROMPT_TEMPLATES,
+      limits: { maxSystemChars: PROMPT_MAX_SYSTEM_CHARS, maxRenderedChars: PROMPT_MAX_RENDERED_CHARS },
+      placeholders: PROMPT_PLACEHOLDERS
+    };
+    if (!row) {
+      return {
+        version: 0,
+        digest: defaultPromptDigest(),
+        prompts: {},
+        isDefault: true,
+        createdAt: '',
+        updatedAt: '',
+        ...base
+      };
+    }
+    const prompts = readJson<Partial<Record<AgentPromptRole, string>>>(row.prompts_json, {});
+    return {
+      version: num(row.version, 0),
+      digest: str(row.digest) ?? defaultPromptDigest(),
+      prompts,
+      isDefault: Object.keys(prompts).length === 0,
+      createdAt: str(row.created_at) ?? '',
+      updatedAt: str(row.updated_at) ?? '',
+      ...base
+    };
+  }
+
   function graphRecordFrom(r: Row): AgentGraphRecord {
     const spec = readJson<GraphSpec | null>(r.spec_json, null);
     if (!spec) throw new Error(`agent_graph 记录损坏: ${String(r.graph_id)} v${String(r.version)}`);
@@ -384,13 +478,49 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       return num(row?.n, 0);
     },
 
+    getActivePromptPack() {
+      const row = one(
+        db,
+        'SELECT * FROM agent_prompt_pack WHERE is_active = 1 ORDER BY version DESC LIMIT 1'
+      );
+      return promptPackViewFrom(row);
+    },
+
+    savePromptPack(prompts) {
+      const normalized = normalizePromptOverrides(prompts);
+      const digest = digestPromptOverrides(normalized);
+      const current = one(
+        db,
+        'SELECT * FROM agent_prompt_pack WHERE is_active = 1 ORDER BY version DESC LIMIT 1'
+      );
+      if (current && (str(current.digest) ?? '') === digest) {
+        return promptPackViewFrom(current);
+      }
+      const now = new Date().toISOString();
+      db.exec('UPDATE agent_prompt_pack SET is_active = 0 WHERE is_active = 1');
+      const stmt = db.prepare(
+        `INSERT INTO agent_prompt_pack (digest, prompts_json, is_active, created_at, updated_at)
+         VALUES (?, ?, 1, ?, ?)`
+      );
+      stmt.run([digest, JSON.stringify(normalized), now, now]);
+      stmt.free();
+      persist();
+      const inserted = one(
+        db,
+        'SELECT * FROM agent_prompt_pack WHERE is_active = 1 ORDER BY version DESC LIMIT 1'
+      );
+      return promptPackViewFrom(inserted);
+    },
+
     insertRun(rec) {
+      const prompt = rec.prompt ?? { version: 0, digest: defaultPromptDigest(), prompts: {} };
       const stmt = db.prepare(
         `INSERT INTO agent_run (
            run_id, graph_id, graph_version, graph_digest, thread_id, status,
            subject_key, subject_label, subject_kind, as_of, started_at,
-           config_json, model, calls, prompt_chars, completion_chars, review_required
-         ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`
+           config_json, model, calls, prompt_chars, completion_chars, review_required,
+           prompt_version, prompt_digest, prompt_json
+         ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?)`
       );
       stmt.run([
         rec.runId,
@@ -404,7 +534,10 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
         rec.asOf,
         rec.startedAt,
         JSON.stringify(rec.config),
-        rec.model
+        rec.model,
+        prompt.version,
+        prompt.digest,
+        JSON.stringify(prompt.prompts)
       ]);
       stmt.free();
       persist();
@@ -416,7 +549,7 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
         `UPDATE agent_run SET
            status = ?, ended_at = ?, state_json = ?, error_code = ?, error_message = ?,
            rating = ?, review_required = ?, calls = ?, prompt_chars = ?, completion_chars = ?,
-           tokens_in = ?, tokens_out = ?, cost_usd = ?, suspend_json = NULL
+           tokens_in = ?, tokens_out = ?, cost_usd = ?, suspend_json = NULL, recovery_json = NULL
          WHERE run_id = ?`
       );
       stmt.run([
@@ -458,6 +591,85 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       ]);
       stmt.free();
       persist();
+    },
+
+    updateRunUsage(runId, usage) {
+      const stmt = db.prepare(
+        `UPDATE agent_run SET
+           calls = ?, prompt_chars = ?, completion_chars = ?, tokens_in = ?, tokens_out = ?, cost_usd = ?
+         WHERE run_id = ?`
+      );
+      stmt.run([
+        usage.calls,
+        usage.promptChars,
+        usage.completionChars,
+        usage.tokensIn ?? null,
+        usage.tokensOut ?? null,
+        usage.costUsd ?? null,
+        runId
+      ]);
+      stmt.free();
+      persist();
+    },
+
+    getRunUsage(runId) {
+      const row = one(
+        db,
+        `SELECT calls, prompt_chars, completion_chars, tokens_in, tokens_out, cost_usd
+           FROM agent_run WHERE run_id = ?`,
+        [runId]
+      );
+      return {
+        calls: num(row?.calls),
+        promptChars: num(row?.prompt_chars),
+        completionChars: num(row?.completion_chars),
+        tokensIn: typeof row?.tokens_in === 'number' ? row.tokens_in : undefined,
+        tokensOut: typeof row?.tokens_out === 'number' ? row.tokens_out : undefined,
+        costUsd: typeof row?.cost_usd === 'number' ? row.cost_usd : undefined
+      };
+    },
+
+    getRunRecovery(runId) {
+      const row = one(db, 'SELECT recovery_json FROM agent_run WHERE run_id = ?', [runId]);
+      return parseRunRecovery(row?.recovery_json);
+    },
+
+    clearRunRecovery(runId) {
+      const stmt = db.prepare('UPDATE agent_run SET recovery_json = NULL WHERE run_id = ?');
+      stmt.run([runId]);
+      stmt.free();
+    },
+
+    getRunPromptSnapshot(runId) {
+      const row = one(
+        db,
+        'SELECT prompt_version, prompt_digest, prompt_json FROM agent_run WHERE run_id = ?',
+        [runId]
+      );
+      if (!row) return null;
+      const prompts = readJson<Partial<Record<AgentPromptRole, string>>>(row.prompt_json, {});
+      return {
+        version: num(row.prompt_version, 0),
+        digest: str(row.prompt_digest) ?? defaultPromptDigest(),
+        prompts
+      };
+    },
+
+    getNodeAttemptBases(runId) {
+      const out: Record<string, number> = {};
+      for (const row of rows(
+        db,
+        'SELECT node_id, MAX(attempt) AS m FROM agent_node_result WHERE run_id = ? GROUP BY node_id',
+        [runId]
+      )) {
+        out[row.node_id as string] = num(row.m);
+      }
+      return out;
+    },
+
+    deleteRunCheckpoints(runId) {
+      db.run('DELETE FROM agent_run_checkpoint_write WHERE run_id = ?', [runId]);
+      db.run('DELETE FROM agent_run_checkpoint WHERE run_id = ?', [runId]);
     },
 
     setRunSuspend(runId, snapshotJson) {
@@ -632,8 +844,11 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
             }
           : undefined;
 
+      // P7：只有真的存在审批挂起快照时才展示审批；checkpoint 恢复的 interrupted
+      // 不应被 UI 误判为等待审批。
+      const suspend = parseSuspendSnapshot(row.suspend_json);
       const approval: ApprovalContext | undefined =
-        summary.status === 'interrupted'
+        summary.status === 'interrupted' && suspend
           ? {
               nodeId: 'final',
               stage: 'final_approval',
@@ -641,6 +856,7 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
               proposal: state?.proposal as ObservationPlan | undefined
             }
           : undefined;
+      const recovery = parseRunRecovery(row.recovery_json) ?? undefined;
 
       const memory =
         typeof state?.memoryContext === 'string'
@@ -657,37 +873,139 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
         nodes,
         decision,
         approval,
+        recovery,
         memory,
-        graphName: graph?.name
+        graphName: graph?.name,
+        prompt: {
+          version: num(row.prompt_version, 0),
+          digest: str(row.prompt_digest) ?? defaultPromptDigest(),
+          prompts: readJson<Partial<Record<AgentPromptRole, string>>>(row.prompt_json, {})
+        }
       };
     },
 
     recoverPreviousProcessRuns(at) {
       let failed = 0;
       let recoverable = 0;
+      let changed = false;
+      // 第一轮把 running/queued 标记为 interrupted 后，第二轮会再次读到它们；
+      // 用集合去重，保证每个 run 只计一次（否则启动恢复计数翻倍）。
+      const handled = new Set<string>();
       const fail = db.prepare(
         `UPDATE agent_run SET status = 'failed', ended_at = ?, error_code = 'E_PROCESS_RESTART',
-         error_message = '进程重启，残留运行已标记失败', suspend_json = NULL
+         error_message = '进程重启，无可恢复的 checkpoint，残留运行已标记失败',
+         suspend_json = NULL, recovery_json = NULL
          WHERE run_id = ?`
       );
       const failRun = (runId: string): void => {
         fail.run([at, runId]);
         failed += db.getRowsModified();
+        changed = true;
       };
-      // queued/running：进程内执行已丢失，无法安全续跑。
-      for (const row of rows(db, "SELECT run_id FROM agent_run WHERE status IN ('queued','running')")) {
-        failRun(row.run_id as string);
+      const markRecoverable = (
+        runId: string,
+        graphId: string,
+        graphVersion: number,
+        graphDigest: string,
+        promptVersion: number,
+        promptDigest: string,
+        checkpointId: string,
+        checkpointStep: number,
+        isMock: boolean,
+        usage: RunUsage
+      ): void => {
+        const recovery: AgentRunRecovery = {
+          v: 1,
+          kind: 'checkpoint',
+          checkpointId,
+          checkpointStep,
+          graphId,
+          graphVersion,
+          graphDigest,
+          promptVersion,
+          promptDigest,
+          threadId: runId,
+          isMock,
+          usage,
+          recoveredAt: at
+        };
+        db.run(
+          `UPDATE agent_run SET status = 'interrupted', ended_at = NULL, error_code = NULL,
+             error_message = NULL, suspend_json = NULL, recovery_json = ?
+           WHERE run_id = ?`,
+          [JSON.stringify(recovery), runId]
+        );
+        recoverable += 1;
+        handled.add(runId);
+        changed = true;
+      };
+
+      // running/queued：有完整 checkpoint + run 绑定信息才标为可恢复，否则安全降级为 failed。
+      for (const row of rows(
+        db,
+        `SELECT run_id, graph_id, graph_version, graph_digest, model, prompt_version, prompt_digest,
+                prompt_json, calls, prompt_chars, completion_chars, tokens_in, tokens_out, cost_usd
+           FROM agent_run WHERE status IN ('queued','running')`
+      )) {
+        const runId = row.run_id as string;
+        const inspected = inspectLatestCheckpoint(db, runId);
+        const promptJson = typeof row.prompt_json === 'string' && row.prompt_json.length > 0;
+        const graphDigest = str(row.graph_digest);
+        const promptDigest = str(row.prompt_digest);
+        if (
+          !inspected.ok ||
+          !graphDigest ||
+          !promptDigest ||
+          !promptJson ||
+          !Number.isInteger(row.graph_version) ||
+          (row.graph_version as number) < 1
+        ) {
+          failRun(runId);
+          continue;
+        }
+        markRecoverable(
+          runId,
+          row.graph_id as string,
+          row.graph_version as number,
+          graphDigest,
+          num(row.prompt_version, 0),
+          promptDigest,
+          inspected.checkpointId as string,
+          inspected.step ?? 0,
+          str(row.model) === 'mock',
+          {
+            calls: num(row.calls),
+            promptChars: num(row.prompt_chars),
+            completionChars: num(row.completion_chars),
+            tokensIn: typeof row.tokens_in === 'number' ? row.tokens_in : undefined,
+            tokensOut: typeof row.tokens_out === 'number' ? row.tokens_out : undefined,
+            costUsd: typeof row.cost_usd === 'number' ? row.cost_usd : undefined
+          }
+        );
       }
-      // interrupted：只有快照完整且可解析时才保留为可恢复。
-      for (const row of rows(db, "SELECT run_id, suspend_json FROM agent_run WHERE status = 'interrupted'")) {
+
+      // interrupted：审批快照优先；否则必须是完整的 checkpoint 恢复元数据且 checkpoint 仍可用。
+      for (const row of rows(
+        db,
+        `SELECT run_id, suspend_json, recovery_json FROM agent_run WHERE status = 'interrupted'`
+      )) {
+        const interruptedRunId = row.run_id as string;
+        if (handled.has(interruptedRunId)) continue;
         if (parseSuspendSnapshot(row.suspend_json)) {
           recoverable += 1;
-        } else {
-          failRun(row.run_id as string);
+          handled.add(interruptedRunId);
+          continue;
         }
+        const recovery = parseRunRecovery(row.recovery_json);
+        if (recovery && inspectLatestCheckpoint(db, recovery.threadId).ok) {
+          recoverable += 1;
+          handled.add(interruptedRunId);
+          continue;
+        }
+        failRun(interruptedRunId);
       }
       fail.free();
-      if (failed > 0) persist();
+      if (changed) persist();
       return { recoverable, failed };
     },
 

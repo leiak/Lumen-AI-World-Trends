@@ -28,6 +28,8 @@ import type {
   AgentGraphSaveResponse,
   AgentGraphVersionSummary,
   AgentIpcResponse,
+  AgentPromptsGetResponse,
+  AgentPromptsSaveResponse,
   AgentRunDetail,
   AgentRunSummary,
   CancelRunResponse,
@@ -35,6 +37,7 @@ import type {
   GraphSpec,
   MemoryListResponse,
   MemorySettleResponse,
+  ResumeCheckpointResponse,
   ResumeRunResponse,
   StartRunResponse
 } from '../../../shared/agent.js';
@@ -49,10 +52,13 @@ export interface AgentIpcDeps {
   restoreDefaultGraph: () => AgentIpcResponse<AgentGraphSaveResponse>;
   run: (payload: unknown) => Promise<AgentIpcResponse<StartRunResponse>>;
   resume: (payload: unknown) => Promise<AgentIpcResponse<ResumeRunResponse>>;
+  resumeCheckpoint: (payload: unknown) => Promise<AgentIpcResponse<ResumeCheckpointResponse>>;
   cancel: (payload: unknown) => Promise<AgentIpcResponse<CancelRunResponse>>;
   listRuns: (payload: unknown) => AgentIpcResponse<AgentRunSummary[]>;
   getRun: (payload: unknown) => AgentIpcResponse<AgentRunDetail>;
   getEvents: (payload: unknown) => AgentIpcResponse<EventsPage>;
+  promptsGet: () => AgentIpcResponse<AgentPromptsGetResponse>;
+  promptsSave: (payload: unknown) => AgentIpcResponse<AgentPromptsSaveResponse>;
   memoryList: () => AgentIpcResponse<MemoryListResponse>;
   memorySettle: () => AgentIpcResponse<MemorySettleResponse>;
 }
@@ -157,10 +163,13 @@ export function registerIpc(deps: IpcDeps): void {
     ipcMain.handle('agent:run', (_e, payload) => agent.run(payload));
     ipcMain.handle('agent:resume', (_e, payload) => agent.resume(payload));
     ipcMain.handle('agent:runs:resume', (_e, payload) => agent.resume(payload));
+    ipcMain.handle('agent:runs:resumeCheckpoint', (_e, payload) => agent.resumeCheckpoint(payload));
     ipcMain.handle('agent:cancel', (_e, payload) => agent.cancel(payload));
     ipcMain.handle('agent:runs:list', (_e, payload) => agent.listRuns(payload));
     ipcMain.handle('agent:runs:get', (_e, payload) => agent.getRun(payload));
     ipcMain.handle('agent:runs:events', (_e, payload) => agent.getEvents(payload));
+    ipcMain.handle('agent:prompts:get', () => agent.promptsGet());
+    ipcMain.handle('agent:prompts:save', (_e, payload) => agent.promptsSave(payload));
     ipcMain.handle('agent:memory:list', () => agent.memoryList());
     ipcMain.handle('agent:memory:settle', () => agent.memorySettle());
   }

@@ -1620,6 +1620,161 @@ interface RunSuspendSnapshot {
      - 变量值含模板语法 → 原样转义，不执行；
      - prompt 编辑后运行 dry-run：Mock 与真实 provider 契约一致。
 
+### P6 — 条件边自由编辑 + 角色 prompt 编辑（已实现）
+
+**P6-1 条件边自由编辑**
+
+- 条件字段仍只有内置枚举：`always` / `debate_rounds` / `risk_rounds`；`condition` 只允许 `kind`、`maxRounds`、`whenDone`、`order`（风控顺序）这些已知键，任何额外字段（如 `expr`）→ `E_VALIDATION`，自由表达式不可能进入图。
+- 源/目标白名单：
+  - `debate_rounds` 源只能是 `bull` / `bear`，target 必须指向对立方，`whenDone` 只能是 `judge` / `final`；
+  - `risk_rounds` 源只能是 `risk_*`，target 必须符合 `aggressive → conservative → neutral`，`whenDone` 只能是 `planner` / `final`；
+  - 重复节点对直接按“重复边”拒绝，条件边不可能在同一源上分叉。
+- 轮数三方一致：
+  - 节点 `config.maxRounds` vs `settings.maxDebateRounds/maxRiskRounds`（nodeId 定位）；
+  - 条件边 `maxRounds` vs 节点 config（edgeId 定位）；
+  - 条件边 `maxRounds` vs settings（edgeId 定位）；
+  - 结构校验改为**收集式**：节点级与边级问题一次尽量全部返回，边级 issue 均带 `edgeId`。
+- 环检测覆盖静态边 + 条件边 `target` + `whenDone`，不再只看静态边；纯 debate/risk 条件回边允许成环，任何包含静态边或 `whenDone` 的混合环都返回 `E_GRAPH_INVALID`，并定位到环内的静态边 `edgeId`。
+- 可解释性：
+  - 条件边保留稳定 `edgeId`；新增 `edgeRouteLabel()` 输出人类可读标签（如“辩论：第 2 轮后 → judge，否则 → bear”）；
+  - `route.taken` 事件同时带 `condition`（人类可读标签）与 `edgeId`；
+  - 编辑器展示保存前路由预览（`agent-route-preview`，可点击定位边）；
+  - 画布对错误边红色高亮、最近路由边绿色加粗；边检查器可改条件类型/目标/`whenDone`，`maxRounds` 只读并随 settings 自动同步，保证不会手工写出三方不一致。
+- UI：画布沿用 React Flow 连接/删除创建或删除边，边检查器负责条件配置；非法边高亮，issue 列表可点击定位到具体 `edgeId`。
+
+**P6-2 角色 prompt 编辑**
+
+- 迁移 v15：新增不可变 `agent_prompt_pack`（`version/digest/prompts_json/is_active`）；`agent_run` 增加 `prompt_version/prompt_digest/prompt_json`。
+- 校验（保存前拒绝，返回逐条 issue）：
+  - 单角色模板 ≤ 800 字符；空/仅空白拒绝；超长定位到 offset 800；
+  - 控制字符、Unicode 双向覆盖符拒绝并给 offset；
+  - 占位符严格白名单：`{{subject.key}}`、`{{subject.label}}`、`{{asOf}}`、`{{round}}`、`{{memory.lessons}}`、`{{evidence.summary}}`；未知/嵌套/不完整/`{{#if}}`/`{{env.*}}` 一律拒绝；
+  - 用固定样本渲染估算 ≤ 1200 字符；实际渲染再做 1200 硬截断作为纵深防御。
+- 渲染只做**一次正则字符串替换**：变量值先转义 `& < >` 并移除控制/双向字符；插入值中的 `{{...}}` 不会被二次解析；不 `eval`、不模板求值、不函数调用。
+- 自定义 prompt 只替换“角色人设段”，系统仍强制追加不可移除的安全/JSON 契约尾注（不可信数据规则、输出 schema、评级枚举）。
+- 版本绑定：
+  - 保存时归一化 + 计算 `sha256` 摘要；摘要不变则复用当前活动包，变化则插入新的不可变版本并切换 active；
+  - run 启动瞬间读取 active pack，写入 `prompt_version/prompt_digest/prompt_json`，并把同一快照注入执行上下文；
+  - 历史 run detail 从 run 自身列恢复 prompt，不读当前 active 包，因此后续编辑不会串味；
+  - 挂起重启快照携带 prompt，恢复后的 final 仍使用启动时 prompt；
+  - 恢复默认 = 提交默认模板，归一化为空覆盖并生成新版本包（`isDefault=true`），而不是复用 v0。
+- UI：新增 prompt 编辑器（按角色 tab、字符计数、未保存状态、显式风险提示、保存/单角色恢复/全部恢复、issue 点击定位并聚焦 offset）；历史 run 与决策卡展示所用 prompt 版本/摘要。
+- 新增 IPC：`agent:prompts:get`、`agent:prompts:save`（仍只在主进程读库/调模型）。
+
+**P6-3 测试与验收**
+
+- `tests/agent-conditional-edge.test.ts`（8 用例）：默认纯条件环合法；非法条件字段/自由表达式；非法源/目标/`whenDone`；重复条件边；轮数三方不一致一次多 issue；混合成环；人类可读标签；自定义 `edgeId` 保存→编译→Mock 跑通且 `route.taken.edgeId` 命中。
+- `tests/agent-prompt.test.ts`（9 用例）：空/超长/控制符/双向符/占位符白名单/样本渲染超限；版本/摘要/重复保存/非法保存不产版；新 run 使用新 prompt、旧 run 回放保持旧 prompt；落库 summary 带 prompt 版本/摘要；恢复默认。
+- `tests/agent-prompt-injection.test.ts`（10 用例）：逐项覆盖 §11 P5-5 注入面清单；恶意 prompt 要求忽略规则/非 JSON/伪造评级/读取密钥路径时，结构化输出仍回退 `review`，不出现编造评级；密钥不进入 prompt。
+- E2E 新增 S7/S8，共 8 个场景：S7 条件边非法目标被定位拒绝→修正保存→真实运行落库 `route.taken.edgeId`；S8 prompt 非法占位符定位拒绝→保存 v1→run 绑定 v1→再编辑 v2→旧 run 回放仍 v1。
+- 全量验收（2026-11-03）：`npm test` 56 文件 / 232 用例全部通过；`npx tsc --noEmit` 通过；`npm run build` 通过；`LUMEN_SMOKE=1 electron .` 输出 `LUMEN_SMOKE_OK`；`npm run e2e` 8/8 通过。
+
+**实现与设计偏差（P6）**
+
+1. `route.taken.condition` 从技术串（如 `debate_rounds:2`）改为人类可读标签，并新增 `edgeId`；`tests/agent-runtime.test.ts` 的旧断言同步改为标签包含判断 + `edgeId` 非空。原因：满足“人类可读路由标签 + 运行期可定位到具体边”。
+2. 自定义 prompt 不能移除系统强制尾注（安全规则 + JSON schema）；这是有意加严，不是设计遗漏。
+3. 注入清单中的“重复角色定义”在 JS 对象键上不可能重复；实现以“未知角色 + 空/空白 prompt”拒绝并落测试，语义等价。
+4. “超长”采用设计建议的**报错**而非截断；运行时渲染的 1200 硬截断仅作纵深防御，正常保存流程不会触发。
+5. 恢复默认生成新的空覆盖版本包（而非回到 v0），保持版本包不可变与历史可追溯。
+6. 条件边检查器的 `maxRounds` 只读、随 settings 同步；用户可改条件类型/目标/`whenDone`，但不提供手工轮数输入，避免三方不一致。
+7. 旧断言调整：`tests/db.test.ts`、`tests/insights.test.ts` schema 断言 14→15；`tests/agent-runtime.test.ts` 路由条件标签断言更新。均因 P6 新增迁移与可解释性输出，业务行为未放宽。
+
+### P7 — 任意断点续跑（基于 sql.js 的 checkpoint 持久化，已实现）
+
+**P7-1 自定义 CheckpointSaver 与表结构**
+
+- `electron/main/agent/checkpoint.ts`：`SqlJsCheckpointSaver extends BaseCheckpointSaver`，存储层复用现有 sql.js，**不引入原生模块**（无 better-sqlite3）。
+- 迁移 v16 新增两张表 + 一列：
+  - `agent_run_checkpoint(run_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id, serde_type, checkpoint_json, metadata_type, metadata_json, run_meta_json, step, created_at)`，主键 `(run_id, checkpoint_ns, checkpoint_id)`；
+  - `agent_run_checkpoint_write(run_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, serde_type, value_json, task_path)`，主键 `(run_id, checkpoint_ns, checkpoint_id, task_id, idx)`；
+  - `agent_run.recovery_json`（可恢复元数据；与 P5 `suspend_json` 互斥使用）。
+- `thread_id = runId`；每个 checkpoint 同时写 `run_meta_json`：`graphId/graphVersion/graphDigest/promptVersion/promptDigest/threadId/isMock`，用于恢复前的一致性校验。
+- 序列化复用 `BaseCheckpointSaver.serde`（`JsonPlusSerializer`）。LangGraph 1.6 的 `dumpsTyped('json', ...)` 实际返回 UTF-8 `Uint8Array`，实现按文本解码后入库（否则结构校验会误判为损坏）；`bytes` 类型按 base64 入库。
+- writes 语义对齐 `MemorySaver`：普通 `idx` 使用 `INSERT OR IGNORE`（同 task+idx 只写一次）；`__error__=-1`、`__scheduled__=-2`、`__interrupt__=-3`、`__resume__=-4` 使用 `INSERT OR REPLACE`（重试可覆盖）。
+- 读取：`getTuple/list` 按 uuid6 `checkpoint_id` 字典序取最新；`pendingWrites` 严格按 `(task_path, task_id, idx)` 的 code point 排序（复用 LangGraph 的 writes 排序契约），保证并行任务重放顺序与在线执行完全一致。
+- 损坏/缺失检测：`inspectLatestCheckpoint(db, runId)` 同步校验返回 `ok/reason('missing'|'corrupt')/checkpointId/step/runMeta`；`getTuple` 遇损坏抛 `CheckpointCorruptError`（`E_CHECKPOINT_CORRUPT`）。
+
+**P7-2 节点级落 checkpoint 与并行 pending writes**
+
+- 编译图时注入 saver：Pregel 在每个 task 完成时调用 `putWrites`，superstep 全部完成后调用 `put`。因此**单个并行分支完成即落 writes**，无需等整组结束。
+- 恢复时 LangGraph 依据 checkpoint 的 pending writes 重放已完成 task，只调度未完成 task；配合 `(task_path, task_id, idx)` 排序，不会重复执行已完成分支，也不会丢未完成分支。
+- 默认图 v4 的 bull/bear 与风控三方由条件边**串行轮转**（不是同一 superstep 的真并行）；实现按上述逐 task 语义保证正确，并用 fan-out `StateGraph` harness 与 saver 单测验证并行部分完成→崩溃→恢复。图拓扑未改（见偏差 1）。
+
+**P7-3 启动恢复策略（结论：手动 resume，不自动续跑）**
+
+- `recoverPreviousProcessRuns()` 规则：
+  - `running/queued` 且 `inspectLatestCheckpoint` 有效、checkpoint `run_meta` 与 run 的 graph/prompt 绑定一致 → `interrupted` + `recovery_json`（`kind='checkpoint'`）；
+  - 否则 → `failed + E_PROCESS_RESTART`（不崩溃、不静默重跑）。
+  - 已 `interrupted`：优先保留有效 P5 suspend 快照（审批恢复）；其次保留完整 checkpoint recovery；两者都失效才降级 `failed`。
+  - 每个 run 只统计一次（内部去重，避免“先标 interrupted 又被第二轮重复计数”）。
+- 选择**手动 resume**的理由：
+  1. 避免重启后静默产生模型费用与长耗时，预算护栏与用户预期一致；
+  2. 用户可先查看已完成的证据/辩论/裁决与已消耗用量，再决定是否继续；
+  3. 与 P5 审批挂起统一为“`interrupted` + 卡片 + 用户动作”的交互心智，两条恢复路径不冲突。
+- `AgentRunRecovery`：`v/kind/checkpointId/checkpointStep/graphId/graphVersion/graphDigest/promptVersion/promptDigest/threadId/isMock/usage/recoveredAt`。
+
+**P7-4 resume 语义与幂等**
+
+- 新增 IPC `agent:runs:resumeCheckpoint` → `AgentRuntime.resumeCheckpoint`：
+  - 仅接受 `interrupted` 且有 `recovery.kind='checkpoint'`；审批挂起 run 必须走 P5 `resumeRun`，否则 `E_RESUME_NO_CHECKPOINT`；
+  - 状态非 interrupted/已终态 → `E_RUN_TERMINAL`；已有活动 run → `E_RUN_ACTIVE`；
+  - graph 版本/digest 与 run 绑定不一致 → `E_RESUME_STALE_GRAPH`；
+  - prompt 版本/digest 不一致 → `E_RESUME_STALE_PROMPT`；
+  - checkpoint 缺失/损坏 → `E_PROCESS_RESTART` 并置 `failed`（安全降级）；
+  - 成功后：`interrupted → running`、清 `suspend_json/recovery_json`、发 `run.resumed {resolution:'checkpoint'}`、`graph.invoke(null, {thread_id})` 从最新 checkpoint 继续。
+- 已完成节点绝不重跑：LangGraph 重放 pending writes、只执行未完成 task；attempt 由 `getNodeAttemptBases()` 续接，同一 `(nodeId, attempt)` 的 `node.started` 在全 run 只出现一次。
+- 重复 resume：第一次成功后状态为 `running`，再次调用返回 `E_RUN_TERMINAL`，不会二次执行。
+- 恢复后再次到达 final 仍进入 P5 审批挂起（P7 不绕过审批闸门）；两条路径共存。
+
+**P7-5 预算与事件约束**
+
+- 每次节点完成即 `updateRunUsage` 落库 `calls/prompt_chars/completion_chars`；resume 以 DB 用量为基线继续累加，**重启不重置**。
+- 事件 bus 以 `getMaxSeq()` 为 `startSeq`：`seq` 跨进程单调、`afterSeq` 补拉连续；沿用“先落库再推送”。
+- 终态 `completed/canceled/failed` 删除该 run 的 checkpoint+writes 并强制 flush；checkpoint 只服务未完成恢复，避免磁盘增长。
+
+**P7-6 写入/落盘节流与最坏丢失窗口**
+
+- 三层节流：
+  1. checkpoint saver：默认每 `flushEvery=4` 个 `put/putWrites` 事件或每 `flushIntervalMs=2000` 触发一次 merge-flush；`forceFlush()` 立即；
+  2. persist scheduler（`electron/main/agent/persist.ts`）：默认 `minIntervalMs=1000`（`LUMEN_PERSIST_INTERVAL_MS` 可调）合并整库 export；`request()` 合并、`flushNow()` 立即；
+  3. 强制 flush 点：审批挂起、启动恢复标记、resume 前清理、终态、`deleteThread`。
+- 实测（一次完整 run 跑到审批挂起）：`puts=13`、`writeBatches=13`、`writeRows=33`、`exports=6`、`forcedExports=1`；persist `requests=78 → flushes=8`（78 次写请求合并为 8 次整库 export），`failures=0`。
+- 最坏丢失窗口：崩溃最多丢最近 **0–3 个未 flush 的 checkpoint 事件（约一个 superstep 的节点进度，且 ≤2s）**；恢复点回退到最近一次已落盘 checkpoint，该窗口内“已启动但未 checkpoint”的节点会重跑一次（已落库的 usage 不会丢，因此不会少算成本）。审批/终态采用强制 flush，关键边界为零丢失。
+- 测试钩子 `LUMEN_CHECKPOINT_FLUSH=immediate`：每个写入事件同步 export，供崩溃/恢复验收取得确定性崩溃点；生产默认关闭。
+
+**P7-7 测试与验收**
+
+- `tests/agent-checkpoint.test.ts`（8 用例）：put/getTuple 往返与 writes 排序；最新/list；负索引覆盖 vs 普通 idx 只写一次；损坏 checkpoint（`E_CHECKPOINT_CORRUPT` + inspect）；`deleteThread`；`flushEvery` 节流与 `forceFlush`；immediate 模式；并行 fan-out StateGraph 部分完成→崩溃→恢复（已完成分支不重跑、未完成分支不丢）。
+- `tests/agent-checkpoint-recovery.test.ts`（7 用例）：真实两进程 A 强杀→B 恢复（已完成节点不重跑、用量 `+5` 累加、`seq` 连续、终态清 checkpoint、重复 resume `E_RUN_TERMINAL`）；损坏 checkpoint 的启动/恢复两条降级路径（`failed + E_PROCESS_RESTART`）；图 digest 变化 `E_RESUME_STALE_GRAPH`；prompt 变化 `E_RESUME_STALE_PROMPT`；审批挂起 run 走 checkpoint resume 拒绝（`E_RESUME_NO_CHECKPOINT`）且 P5 审批仍可用；默认节流统计。
+- `tests/db.test.ts` 增加 v16 表结构/主键/索引断言。
+- E2E 新增 S9（合计 9 场景）：进程 A 在 planner 执行中**真实强杀** → 进程 B 启动标记 interrupted → 恢复卡片 → checkpoint 续跑 → final 审批 → completed；断言强杀前后已成功节点记录不变、无新增 attempt、同 `(nodeId,attempt)` started 仅一次、`seq` 连续、用量累加、checkpoint 清理。
+
+**P7-7 全量验收记录（2026-11-03，实际执行）**
+
+| 命令 | 结果 |
+|---|---|
+| `npm test` | 58 个测试文件 / 248 个用例全部通过（Duration 13.61s） |
+| `npx tsc --noEmit` | 退出码 0，无类型错误 |
+| `npm run build` | 通过：renderer（814 modules）、Electron SSR bundle（253.03 kB）、preload copied |
+| `npx electron .`（`LUMEN_SMOKE=1`） | 输出 `LUMEN_SMOKE_OK`，`ready=true`、dbPath 正常、11 个数据源注册、导航渲染成功 |
+| `npm run e2e` | **9/9 通过**（S1–S9）；S9「中途强杀→重启→checkpoint 恢复→审批→completed」13667ms |
+
+- 断点续跑真实验收（`tests/agent-checkpoint-recovery.test.ts`）：进程 A 被强杀后，B 启动恢复计数 `{recoverable:1, failed:0}`；resume 后 final 审批 → completed；已完成节点 `MAX(attempt)` 不变、重启后无已完成节点的 `node.started`、全局每个 `(nodeId, attempt)` 的 `started` 恰好 1 次；用量 `+5` 累加；`seq` 从 1 连续；终态 checkpoint 行数 0；重复 resume 返回 `E_RUN_TERMINAL`。
+- 并行部分完成恢复（`tests/agent-checkpoint.test.ts`）：3 分支 fan-out 中 `nb` 中断 → 用新 saver 实例 `invoke(null)` 续跑，`na`/`nc` 各执行 1 次、`nb` 2 次，最终状态 `{a:1,b:1,c:1}`。
+- 节流实测（P7-6 同源数据，本轮复测一致）：`puts=13`、`writeBatches=13`、`writeRows=33`、`exports=6`、`forcedExports=1`；persist `requests=78 → flushes=8`、`failures=0`。
+
+**实现与设计偏差（P7）**
+
+1. **并行拓扑**：设计要求覆盖“并行节点（bull/bear、风控三方）”的 pending writes。当前默认图 v4 中 bull/bear 与风控三方由条件边串行轮转，不属于同一 superstep 的真并行；P7 未改动图拓扑（改并行会改变 P4/P6 编辑器条件边语义）。实现按 LangGraph 的逐 task writes 语义天然支持并行，并用 fan-out `StateGraph` harness（3 分支、1 分支完成/1 分支中断）与 saver 单测证明恢复正确。
+2. **恢复策略**：按设计“二选一”，选定**手动 resume**（理由见 P7-3），不自动续跑。
+3. **新增恢复载体**：设计只给出方向，实现补充了 `agent_run.recovery_json`、`AgentRunDetail.recovery`、`AgentRunRecovery`、IPC `agent:runs:resumeCheckpoint`、`run.resumed {resolution:'checkpoint'}`、错误码 `E_RESUME_NO_CHECKPOINT` / `E_RESUME_STALE_PROMPT`。
+4. **审批判定收紧**：`getRunDetail.approval` 仅在 `status='interrupted'` 且存在有效 suspend 快照时返回，避免 checkpoint 恢复 run 误显示审批卡；P5 相关测试仍通过，无业务放宽。
+5. **checkpoint 生命周期**：终态/取消/失败即删除 checkpoint+writes，完成后不可再 resume（`E_RUN_TERMINAL`）。设计未规定清理时机，此处以磁盘可控与语义明确为先。
+6. **json serde 编码**：LangGraph 1.6 `dumpsTyped` 的 json payload 为 `Uint8Array`，实现按 UTF-8 文本入库；这是框架行为适配，非设计偏差，但直接 `JSON.stringify(Uint8Array)` 会产生 `{"0":..}` 型损坏，已在单测覆盖。
+7. **节流测试钩子**：新增 `LUMEN_CHECKPOINT_FLUSH=immediate` 与 `LUMEN_PERSIST_INTERVAL_MS` 环境变量；仅用于测试/验收确定性，默认路径仍是节流合并。
+8. **旧断言调整**：`tests/db.test.ts`、`tests/insights.test.ts` 的 schema 断言 15→16（P7 迁移必须）；未放宽任何 P0–P6 业务断言。
+9. **启动损坏策略**：损坏 checkpoint 在启动阶段直接 `failed + E_PROCESS_RESTART`，不自动转为“全新 run”，避免静默重置预算/事件序列。
+
 ### 阶段依赖与 Mock 验证矩阵
 
 | 阶段 | 依赖 | Mock 验证 |
@@ -1630,6 +1785,8 @@ interface RunSuspendSnapshot {
 | P3 | P2 | 用 fixture 决策与 fixture 热度快照，验证结算/过滤；无 Key 时 memory 节点注入 + 全链路 + 至少一条结算通过 |
 | P4 | P0–P3 | 编辑器保存后仍用 Mock 跑通一次 |
 | P5 | P0–P4 | E2E 真实点击（6 场景）；跨进程 A/B resume；Mock 分块流拼合；chunk 体积对比 |
+| P6 | P0–P5 | 条件边 8 用例；prompt 校验/版本绑定 9 用例；注入面 10 用例；E2E S7/S8（合计 8 场景） |
+| P7 | P0–P6 | checkpoint saver 8 用例；断点恢复 7 用例（含两进程强杀/并行分支/错误路径/节流）；E2E S9（合计 9 场景） |
 
 ---
 
@@ -1644,7 +1801,7 @@ interface RunSuspendSnapshot {
 | LangGraph.js `interrupt()` 不抛异常 | 误判为 completed | 用 `isInterrupted(state)` 检查 `__interrupt__`，并保留 `isGraphInterrupt` 兜底 |
 | 无 token 流式 | 长文本等待体验差 | 节点级事件兜底；P5 已加 SSE + Mock 分块流，UI 运行中增量显示 |
 | 结构化输出不稳定 | 评级不可用 | 两次解析 + 唯一标签兜底 + `review`，绝不默认 neutral |
-| `better-sqlite3` 原生模块 | Electron 打包/跨平台失败 | 本期不引入；P5 采用零依赖 suspend_json 降级方案；完整 checkpointer 留待 P6 单独 `agent.db` + electron-rebuild |
+| `better-sqlite3` 原生模块 | Electron 打包/跨平台失败 | 不引入；P7 用纯 WASM 的 sql.js 实现自定义 Checkpointer（无原生依赖），并以节流合并整库 export 控制成本 |
 | 抓取内容提示注入 | 角色被诱导改变任务 | 不可信数据分隔符 + 无副作用工具 + 输出 schema 校验 |
 | 多智能体成本失控 | 账单/时延 | 轮数上限、成本上限、单运行并发 1 |
 | 图编辑误操作 | 运行失败/历史不可复现 | 保存前 dry-run、版本快照、历史 run 独立 spec |
@@ -1658,7 +1815,7 @@ interface RunSuspendSnapshot {
 2. **记忆的“结果”定义**（P3 已定）：主指标为同话题热度排名变化，辅助为动量变化与文章量变化；默认窗口 7 天，`minArticles=3`。依据见 §9.4；如需调整，`windowDays`/`minArticles` 为结算参数，排名→hit/miss 阈值集中在 `agent/memory.ts` 的 `judge()`。
 3. **P0 是否必须 token 流式**（P5 已解决）：`AiProvider.generateStream` 已支持 ARK/OpenAI 兼容 SSE，Mock 可分块；非流式路径保留。
 4. **默认预算**：单次运行默认 4 个取证 + 2 轮辩论 + 1 轮风控（约 20–30 次模型调用），成本上限 $0.30、整轮 10 分钟是否可接受？
-5. **编辑权限边界（P4 已定）**：只允许编辑“结构与白名单参数”，角色 prompt 不开放；条件边不由画布自由编辑，轮数变更时自动同步节点/settings/条件边。若未来开放 prompt，需增加长度上限、变量白名单与注入面测试。
+5. **编辑权限边界（P4 已定，P6 扩展）**：P4 只允许编辑“结构与白名单参数”；P6 已开放条件边与角色 prompt，但仍受内置条件枚举、源/目标/`whenDone` 白名单、三方轮数一致、800/1200 长度上限、占位符白名单与 10 项注入面测试约束，且 prompt 版本随 run 绑定，历史回放不串味。
 
 ---
 

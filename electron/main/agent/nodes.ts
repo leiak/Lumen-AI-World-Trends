@@ -1,6 +1,7 @@
 import type { Database } from 'sql.js';
 import type {
   AgentNodeType,
+  AgentPromptRole,
   ApprovalResolution,
   DebateEntry,
   DebateState,
@@ -47,6 +48,8 @@ export interface AgentNodeDeps {
   asOf: string;
   /** resume 时由 graph 层写入的人工审批结果；final 节点消费。 */
   approval?: ApprovalResolution;
+  /** P6：本次运行绑定的角色 prompt 覆盖；缺省使用内置默认。 */
+  prompts?: Partial<Record<AgentPromptRole, string>>;
 }
 
 export type NodeImplementation = (
@@ -104,7 +107,8 @@ async function runEvidence(
     asOf,
     trends,
     articles,
-    state.memoryContext
+    state.memoryContext,
+    deps.prompts?.evidence
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -148,7 +152,8 @@ async function runDebate(
     debate,
     opponentLatest,
     round,
-    maxRounds
+    maxRounds,
+    deps.prompts?.[stance]
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -183,7 +188,8 @@ async function runJudge(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
     state.asOf,
     reportsOf(state),
     state.debate?.entries ?? [],
-    state.memoryContext
+    state.memoryContext,
+    deps.prompts?.judge
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -235,7 +241,10 @@ async function runRisk(
     risk,
     latestOthers,
     round,
-    maxRounds
+    maxRounds,
+    deps.prompts?.[
+      stance === 'aggressive' ? 'risk_aggressive' : stance === 'conservative' ? 'risk_conservative' : 'risk_neutral'
+    ]
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -276,7 +285,8 @@ async function runPlanner(
     state.decision,
     state.debate?.entries ?? [],
     state.risk?.entries ?? [],
-    maxTriggers
+    maxTriggers,
+    deps.prompts?.planner
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -322,7 +332,8 @@ async function runFinal(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
     state.proposal,
     state.debate?.entries ?? [],
     state.risk?.entries ?? [],
-    state.memoryContext
+    state.memoryContext,
+    deps.prompts?.final
   );
   const { value, raw } = await generateStructured(
     deps.generate,

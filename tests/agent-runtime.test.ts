@@ -196,8 +196,29 @@ describe('agent runtime', () => {
       'risk_neutral',
       'final'
     ]);
-    expect(routes.slice(0, 4).every((e) => e.event.type === 'route.taken' && e.event.condition === 'debate_rounds:2')).toBe(true);
-    expect(routes.slice(4).every((e) => e.event.type === 'route.taken' && e.event.condition === 'risk_rounds:1')).toBe(true);
+    // P6：condition 改为人类可读标签，并携带 edgeId 以便画布定位。
+    expect(
+      routes
+        .slice(0, 4)
+        .every(
+          (e) =>
+            e.event.type === 'route.taken' &&
+            e.event.condition.includes('辩论：第 2 轮后') &&
+            typeof e.event.edgeId === 'string' &&
+            e.event.edgeId.length > 0
+        )
+    ).toBe(true);
+    expect(
+      routes
+        .slice(4)
+        .every(
+          (e) =>
+            e.event.type === 'route.taken' &&
+            e.event.condition.includes('风控：第 1 轮后') &&
+            typeof e.event.edgeId === 'string' &&
+            e.event.edgeId.length > 0
+        )
+    ).toBe(true);
 
     const judgePrompt = prompts.find((m) => (m[0]?.content ?? '').includes('裁决者'));
     expect(judgePrompt).toBeTruthy();

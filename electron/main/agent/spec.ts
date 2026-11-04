@@ -287,6 +287,12 @@ function validateEdge(
         message: `edge ${raw.id} risk_rounds 必须按 order 顺序流转（期望 ${expectedTarget}）`
       };
     }
+    if (c.whenDone === target) {
+      return {
+        code: 'E_GRAPH_INVALID',
+        message: `edge ${raw.id} whenDone 与条件分支 target 必须互斥`
+      };
+    }
     if ((srcNode.config as { maxRounds?: number }).maxRounds !== c.maxRounds) {
       return {
         code: 'E_VALIDATION',
@@ -335,6 +341,12 @@ function validateEdge(
     return {
       code: 'E_GRAPH_INVALID',
       message: `edge ${raw.id} debate_rounds 必须指向对立方（${expectedTarget}）`
+    };
+  }
+  if (c.whenDone === target) {
+    return {
+      code: 'E_GRAPH_INVALID',
+      message: `edge ${raw.id} whenDone 与条件分支 target 必须互斥`
     };
   }
   if ((srcNode.config as { maxRounds?: number }).maxRounds !== c.maxRounds) {
@@ -543,65 +555,100 @@ export function validateGraphSpec(raw: unknown): SpecValidation {
     if (planner.length !== 1) {
       return fail('E_GRAPH_INVALID', '启用风控节点时必须有 1 个 planner 作为出口');
     }
-    for (const n of riskNodes) {
-      const rounds = (n.config as { maxRounds: number }).maxRounds;
-      if (rounds !== settings.maxRiskRounds) {
-        return fail('E_VALIDATION', `节点 ${n.id} maxRounds 必须与 settings.maxRiskRounds 一致`, {
-          nodeId: n.id
-        });
-      }
+  }
+
+  // P6：轮数三方一致（settings / 节点 config / 条件边）与条件边约束一次尽量收集多条。
+  const structuralIssues: SpecIssue[] = [];
+  for (const n of riskNodes) {
+    const rounds = (n.config as { maxRounds: number }).maxRounds;
+    if (rounds !== settings.maxRiskRounds) {
+      structuralIssues.push({
+        code: 'E_VALIDATION',
+        message: `节点 ${n.id} maxRounds 必须与 settings.maxRiskRounds 一致`,
+        nodeId: n.id
+      });
     }
   }
 
   // 轮数必须只有一个事实来源：settings 与 bull/bear 节点配置一致。
   const bullRounds = (bull[0].config as { maxRounds: number }).maxRounds;
   const bearRounds = (bear[0].config as { maxRounds: number }).maxRounds;
-  if (bullRounds !== settings.maxDebateRounds || bearRounds !== settings.maxDebateRounds) {
-    return fail(
-      'E_VALIDATION',
-      'maxDebateRounds 必须与 bull/bear 节点配置的 maxRounds 一致',
-      { nodeId: bullRounds !== settings.maxDebateRounds ? bull[0].id : bear[0].id }
-    );
+  if (bullRounds !== settings.maxDebateRounds) {
+    structuralIssues.push({
+      code: 'E_VALIDATION',
+      message: `节点 ${bull[0].id} maxRounds 必须与 settings.maxDebateRounds 一致`,
+      nodeId: bull[0].id
+    });
   }
+  if (bearRounds !== settings.maxDebateRounds) {
+    structuralIssues.push({
+      code: 'E_VALIDATION',
+      message: `节点 ${bear[0].id} maxRounds 必须与 settings.maxDebateRounds 一致`,
+      nodeId: bear[0].id
+    });
+  }
+
   const conditionalEdges = edges.filter((e) => e.condition && e.condition.kind !== 'always');
-  const condSources = new Set<string>();
+  const condSources = new Map<string, string>();
   for (const e of conditionalEdges) {
-    if (condSources.has(e.source)) {
-      return fail('E_GRAPH_INVALID', `节点 ${e.source} 只允许一条条件边`, { edgeId: e.id });
+    const prev = condSources.get(e.source);
+    if (prev) {
+      structuralIssues.push({
+        code: 'E_GRAPH_INVALID',
+        message: `节点 ${e.source} 只允许一条条件边（与 ${prev} 冲突）`,
+        edgeId: e.id
+      });
+      continue;
     }
-    condSources.add(e.source);
+    condSources.set(e.source, e.id);
   }
 
   const debateEdges = conditionalEdges.filter((e) => e.condition?.kind === 'debate_rounds');
   const bullToBear = debateEdges.find((e) => e.source === bull[0].id && e.target === bear[0].id);
   const bearToBull = debateEdges.find((e) => e.source === bear[0].id && e.target === bull[0].id);
   if (!bullToBear || !bearToBull) {
-    return fail(
-      'E_GRAPH_INVALID',
-      '多轮辩论需要 bull→bear 与 bear→bull 两条 debate_rounds 条件边'
-    );
+    structuralIssues.push({
+      code: 'E_GRAPH_INVALID',
+      message: '多轮辩论需要 bull→bear 与 bear→bull 两条 debate_rounds 条件边'
+    });
   }
   for (const e of debateEdges) {
     const c = e.condition as { kind: 'debate_rounds'; maxRounds: number; whenDone: string };
     if (c.maxRounds !== settings.maxDebateRounds) {
-      return fail('E_VALIDATION', `edge ${e.id} maxRounds 必须与 settings 一致`, { edgeId: e.id });
+      structuralIssues.push({
+        code: 'E_VALIDATION',
+        message: `edge ${e.id} maxRounds 必须与 settings.maxDebateRounds 一致`,
+        edgeId: e.id
+      });
     }
     if (!nodeById.has(c.whenDone)) {
-      return fail('E_GRAPH_INVALID', `edge ${e.id} whenDone 节点不存在`, { edgeId: e.id });
+      structuralIssues.push({
+        code: 'E_GRAPH_INVALID',
+        message: `edge ${e.id} whenDone 节点不存在`,
+        edgeId: e.id
+      });
     }
   }
 
   // 风控条件边：三个风控节点各一条，order 必须一致。
   const riskEdges = conditionalEdges.filter((e) => e.condition?.kind === 'risk_rounds');
   if (riskNodes.length === 0 && riskEdges.length > 0) {
-    return fail('E_GRAPH_INVALID', 'risk_rounds 条件边需要三个风控节点');
+    structuralIssues.push({
+      code: 'E_GRAPH_INVALID',
+      message: 'risk_rounds 条件边需要三个风控节点'
+    });
   }
   if (riskNodes.length === 3) {
     let orderKey: string | null = null;
     for (const n of riskNodes) {
       const edge = riskEdges.find((e) => e.source === n.id);
       if (!edge) {
-        return fail('E_GRAPH_INVALID', `风控节点 ${n.id} 缺少 risk_rounds 条件边`, { nodeId: n.id });
+        structuralIssues.push({
+          code: 'E_GRAPH_INVALID',
+          message: `风控节点 ${n.id} 缺少 risk_rounds 条件边`,
+          nodeId: n.id
+        });
+        continue;
       }
       const c = edge.condition as {
         kind: 'risk_rounds';
@@ -610,19 +657,24 @@ export function validateGraphSpec(raw: unknown): SpecValidation {
         whenDone: string;
       };
       if (c.maxRounds !== settings.maxRiskRounds) {
-        return fail('E_VALIDATION', `edge ${edge.id} maxRounds 必须与 settings 一致`, {
+        structuralIssues.push({
+          code: 'E_VALIDATION',
+          message: `edge ${edge.id} maxRounds 必须与 settings.maxRiskRounds 一致`,
           edgeId: edge.id
         });
       }
       const key = c.order.join('|');
       if (orderKey !== null && key !== orderKey) {
-        return fail('E_GRAPH_INVALID', '所有 risk_rounds 条件边必须使用相同的 order', {
+        structuralIssues.push({
+          code: 'E_GRAPH_INVALID',
+          message: '所有 risk_rounds 条件边必须使用相同的 order',
           edgeId: edge.id
         });
       }
       orderKey = key;
     }
   }
+  if (structuralIssues.length > 0) return failIssues(structuralIssues);
 
   const startTargets = edges.filter((e) => e.source === '__start__');
   if (startTargets.length === 0) return fail('E_GRAPH_INVALID', '__start__ 没有指向任何节点');
@@ -667,39 +719,55 @@ export function validateGraphSpec(raw: unknown): SpecValidation {
     }
   }
 
-  // 只对“静态边”做无环检查；debate_rounds / risk_rounds 条件回边允许成环。
-  const staticOut = new Map<string, string[]>();
+  // P6：环检测覆盖静态边、条件边 target 与 whenDone，避免条件边绕过静态环检测。
+  // 只有“纯条件回边”（辩论 bull↔bear、风控三节点环）允许成环。
+  const cycleAdj = new Map<string, { to: string; edge: GraphEdgeSpec }[]>();
+  const addCycleAdj = (from: string, to: string, edge: GraphEdgeSpec): void => {
+    if (from === '__end__' || to === '__start__' || to === '__end__') return;
+    const list = cycleAdj.get(from) ?? [];
+    list.push({ to, edge });
+    cycleAdj.set(from, list);
+  };
   for (const e of edges) {
-    if (e.condition && e.condition.kind !== 'always') continue;
-    if (e.source === '__end__' || e.target === '__start__') continue;
-    const list = staticOut.get(e.source) ?? [];
-    list.push(e.target);
-    staticOut.set(e.source, list);
-  }
-  const incomingCount = new Map<string, number>();
-  for (const n of nodes) incomingCount.set(n.id, 0);
-  for (const e of edges) {
-    if (e.condition && e.condition.kind !== 'always') continue;
-    if (e.target === '__end__' || e.source === '__start__') continue;
-    incomingCount.set(e.target, (incomingCount.get(e.target) ?? 0) + 1);
-  }
-  const kahn: string[] = [];
-  for (const n of nodes) if (incomingCount.get(n.id) === 0) kahn.push(n.id);
-  let visited = 0;
-  while (kahn.length > 0) {
-    const cur = kahn.shift()!;
-    visited++;
-    for (const next of staticOut.get(cur) ?? []) {
-      if (next === '__end__') continue;
-      const c = (incomingCount.get(next) ?? 0) - 1;
-      incomingCount.set(next, c);
-      if (c === 0) kahn.push(next);
+    addCycleAdj(e.source, e.target, e);
+    if (e.condition && e.condition.kind !== 'always') {
+      addCycleAdj(e.source, e.condition.whenDone, e);
     }
   }
-  if (visited !== nodes.length) {
+  const color = new Map<string, 0 | 1 | 2>();
+  const nodeStack: string[] = [];
+  const edgeStack: GraphEdgeSpec[] = [];
+  const illegalRef: { value: { edge: GraphEdgeSpec; cycle: string[] } | null } = { value: null };
+  const visit = (id: string): void => {
+    color.set(id, 1);
+    nodeStack.push(id);
+    for (const { to, edge } of cycleAdj.get(id) ?? []) {
+      const state = color.get(to) ?? 0;
+      if (state === 1) {
+        const startIdx = Math.max(0, nodeStack.indexOf(to));
+        const cycleNodes = nodeStack.slice(startIdx).concat(to);
+        const cycleEdges = edgeStack.slice(startIdx).concat(edge);
+        const staticEdge = cycleEdges.find((x) => !x.condition || x.condition.kind === 'always');
+        if (staticEdge && illegalRef.value === null) {
+          illegalRef.value = { edge: staticEdge, cycle: cycleNodes };
+        }
+      } else if (state === 0) {
+        edgeStack.push(edge);
+        visit(to);
+        edgeStack.pop();
+      }
+    }
+    nodeStack.pop();
+    color.set(id, 2);
+  };
+  for (const n of nodes) {
+    if ((color.get(n.id) ?? 0) === 0) visit(n.id);
+  }
+  if (illegalRef.value !== null) {
     return fail(
       'E_GRAPH_INVALID',
-      '静态边存在环路（只有 debate_rounds / risk_rounds 条件回边允许成环）'
+      `静态边或 whenDone 参与成环：${illegalRef.value.cycle.join(' → ')}（只有纯 debate_rounds / risk_rounds 条件回边允许成环）`,
+      { edgeId: illegalRef.value.edge.id }
     );
   }
 

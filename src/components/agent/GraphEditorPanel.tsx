@@ -1,11 +1,4 @@
-import type {
-  AgentGraphStatus,
-  AgentNodeType,
-  GraphNodeSpec,
-  GraphSpec,
-  GraphSpecIssue,
-  RunSettings
-} from '../../../shared/agent';
+import { edgeRouteLabel, type AgentGraphStatus, type AgentNodeType, type GraphEdgeSpec, type GraphNodeSpec, type GraphSpec, type GraphSpecIssue, type RunSettings } from '../../../shared/agent';
 import { useI18n } from '../../i18n/I18n';
 
 export interface GraphEditorPanelProps {
@@ -19,8 +12,13 @@ export interface GraphEditorPanelProps {
   error?: string;
   savedAt?: string;
   selectedNodeId?: string;
+  selectedEdgeId?: string;
   nodeErrors: Record<string, string>;
   onSelectNode: (nodeId: string) => void;
+  onSelectEdge: (edgeId: string) => void;
+  onEdgeCondition: (edgeId: string, kind: 'always' | 'debate_rounds' | 'risk_rounds') => void;
+  onEdgeTarget: (edgeId: string, value: string) => void;
+  onEdgeWhenDone: (edgeId: string, value: string) => void;
   onLabel: (nodeId: string, value: string) => void;
   onJoinMode: (nodeId: string, value: 'all' | 'any' | undefined) => void;
   onConfig: (nodeId: string, field: string, value: string | number) => void;
@@ -188,8 +186,82 @@ function NodeInspector(props: {
         />
       )}
       {(node.type === 'judge' || node.type === 'final') && (
-        <div className="agent-editor-readonly">{t('agent.editor.readonlyPrompt')}</div>
+        <div className="agent-editor-readonly">{t('agent.editor.promptMoved')}</div>
       )}
+    </div>
+  );
+}
+
+function EdgeInspector(props: {
+  edge: GraphEdgeSpec;
+  nodes: GraphNodeSpec[];
+  issue?: string;
+  onCondition: (kind: 'always' | 'debate_rounds' | 'risk_rounds') => void;
+  onTarget: (value: string) => void;
+  onWhenDone: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const { edge } = props;
+  const cond = edge.condition;
+  const kind = cond && cond.kind !== 'always' ? cond.kind : 'always';
+  const options = props.nodes.filter((n) => n.id !== '__start__');
+  return (
+    <div className="agent-editor-inspector" data-testid="agent-edge-inspector" data-edge-id={edge.id}>
+      <h4>{t('agent.editor.edgeInspector')}</h4>
+      {props.issue && <div className="agent-editor-node-error" data-testid="agent-edge-error">{props.issue}</div>}
+      <div className="agent-editor-meta">
+        <span>{t('agent.editor.edgeId')}: {edge.id}</span>
+        <span>{edge.source} → {edge.target}</span>
+      </div>
+      <label className="agent-editor-field">
+        <span>{t('agent.editor.conditionKind')}</span>
+        <select
+          data-testid="agent-edge-kind"
+          value={kind}
+          onChange={(e) =>
+            props.onCondition(e.target.value as 'always' | 'debate_rounds' | 'risk_rounds')
+          }
+        >
+          <option value="always">{t('agent.editor.condition.always')}</option>
+          <option value="debate_rounds">{t('agent.editor.condition.debate')}</option>
+          <option value="risk_rounds">{t('agent.editor.condition.risk')}</option>
+        </select>
+      </label>
+      <label className="agent-editor-field">
+        <span>{t('agent.editor.edgeTarget')}</span>
+        <select
+          data-testid="agent-edge-target"
+          value={edge.target}
+          onChange={(e) => props.onTarget(e.target.value)}
+        >
+          {options.map((n) => (
+            <option key={n.id} value={n.id}>{n.label} ({n.id})</option>
+          ))}
+        </select>
+      </label>
+      {cond && cond.kind !== 'always' && (
+        <>
+          <label className="agent-editor-field">
+            <span>{t('agent.editor.whenDone')}</span>
+            <select
+              data-testid="agent-edge-when-done"
+              value={cond.whenDone}
+              onChange={(e) => props.onWhenDone(e.target.value)}
+            >
+              {options.map((n) => (
+                <option key={n.id} value={n.id}>{n.label} ({n.id})</option>
+              ))}
+            </select>
+          </label>
+          <div className="agent-editor-readonly" data-testid="agent-edge-rounds">
+            {t('agent.editor.edgeRounds', { rounds: cond.maxRounds })}
+          </div>
+          <div className="agent-editor-readonly" data-testid="agent-edge-route-label">
+            {edgeRouteLabel(edge) ?? ''}
+          </div>
+        </>
+      )}
+      <div className="agent-editor-hint">{t('agent.editor.edgeHint')}</div>
     </div>
   );
 }
@@ -201,6 +273,8 @@ export default function GraphEditorPanel(props: GraphEditorPanelProps) {
     return <div className="agent-editor-panel">{t('common.loading')}</div>;
   }
   const selected = draft.nodes.find((n) => n.id === props.selectedNodeId);
+  const selectedEdge = draft.edges.find((e) => e.id === props.selectedEdgeId);
+  const conditionalEdges = draft.edges.filter((e) => e.condition && e.condition.kind !== 'always');
   const setting = <K extends keyof RunSettings>(k: K) => draft.settings[k];
 
   return (
@@ -246,11 +320,17 @@ export default function GraphEditorPanel(props: GraphEditorPanelProps) {
                     })}
                   </button>
                 ) : (
-                  <span className="agent-editor-locate">
+                  <button
+                    type="button"
+                    className="agent-editor-locate"
+                    data-testid="agent-editor-locate-edge"
+                    data-edge-id={issue.edgeId}
+                    onClick={() => props.onSelectEdge(issue.edgeId as string)}
+                  >
                     {t('agent.editor.issueAt', {
                       where: t('agent.editor.edgeLoc', { id: issue.edgeId ?? '' })
                     })}
-                  </span>
+                  </button>
                 ))}
             </div>
           ))}
@@ -361,7 +441,36 @@ export default function GraphEditorPanel(props: GraphEditorPanelProps) {
         </div>
       </div>
 
-      {selected ? (
+      <div className="agent-editor-route-preview" data-testid="agent-route-preview">
+        <h4>{t('agent.editor.routePreview')}</h4>
+        {conditionalEdges.length === 0 ? (
+          <div className="agent-editor-hint">{t('agent.editor.routePreviewEmpty')}</div>
+        ) : (
+          conditionalEdges.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className="agent-editor-route-item"
+              data-testid="agent-route-item"
+              data-edge-id={e.id}
+              onClick={() => props.onSelectEdge(e.id)}
+            >
+              <code>{e.id}</code> · {edgeRouteLabel(e)}
+            </button>
+          ))
+        )}
+      </div>
+
+      {selectedEdge ? (
+        <EdgeInspector
+          edge={selectedEdge}
+          nodes={draft.nodes}
+          issue={props.issues.find((i) => i.edgeId === selectedEdge.id)?.message}
+          onCondition={(kind) => props.onEdgeCondition(selectedEdge.id, kind)}
+          onTarget={(value) => props.onEdgeTarget(selectedEdge.id, value)}
+          onWhenDone={(value) => props.onEdgeWhenDone(selectedEdge.id, value)}
+        />
+      ) : selected ? (
         <NodeInspector
           node={selected}
           issue={props.nodeErrors[selected.id]}

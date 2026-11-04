@@ -1,17 +1,13 @@
-import { MemorySaver, START, END, StateGraph, interrupt, isGraphInterrupt } from '@langchain/langgraph';
-import type {
-  ApprovalContext,
-  ApprovalResolution,
-  DebateEntry,
-  DebateState,
-  GraphNodeSpec,
-  GraphSpec,
-  JsonObject,
-  MemoryInjection,
-  RiskDebateState,
-  RiskEntry,
-  RiskStance
-} from '../../../shared/agent.js';
+import {
+  MemorySaver,
+  START,
+  END,
+  StateGraph,
+  interrupt,
+  isGraphInterrupt,
+  type BaseCheckpointSaver
+} from '@langchain/langgraph';
+import { edgeRouteLabel, type ApprovalContext, type ApprovalResolution, type DebateEntry, type DebateState, type GraphNodeSpec, type GraphSpec, type JsonObject, type MemoryInjection, type RiskDebateState, type RiskEntry, type RiskStance } from '../../../shared/agent.js';
 import type { AgentNodeDeps } from './nodes.js';
 import { nodeImplementations } from './nodes.js';
 import { AgentCanceledError, AgentTimeoutError } from './errors.js';
@@ -24,7 +20,7 @@ export interface GraphRunHooks {
   onNodeFailed(node: GraphNodeSpec, error: unknown, elapsedMs: number, attempt: number): void;
   onDebateTurn(node: GraphNodeSpec, entry: DebateEntry, count: number, maxRounds: number): void;
   onRiskTurn(node: GraphNodeSpec, entry: RiskEntry, count: number, maxRounds: number): void;
-  onRouteTaken(from: string, to: string, condition: string): void;
+  onRouteTaken(from: string, to: string, condition: string, edgeId: string): void;
   checkCanceled(): void;
   /** P5：在节点执行的异步上下文中运行，供 token 流式事件定位到具体节点。 */
   withNodeContext?<T>(node: GraphNodeSpec, attempt: number, fn: () => Promise<T>): Promise<T>;
@@ -32,7 +28,7 @@ export interface GraphRunHooks {
 
 export interface CompiledAgentGraph {
   graph: ReturnType<StateGraph<typeof AgentStateAnnotation>['compile']>;
-  checkpointer: MemorySaver;
+  checkpointer: BaseCheckpointSaver;
 }
 
 export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -100,6 +96,10 @@ export function compileAgentGraph(
     skipInterrupt?: boolean;
     /** P5：重启恢复时 final 已被中断过一次，新尝试从 attemptBase + 1 开始。 */
     attemptBase?: number;
+    /** P7：断点续跑时按节点已有最大 attempt 续号，避免与历史尝试冲突。 */
+    attemptBases?: Record<string, number>;
+    /** P7：外部注入的 checkpointer（默认 MemorySaver，保持 P5 行为）。 */
+    checkpointer?: BaseCheckpointSaver;
   }
 ): CompiledAgentGraph {
   const builder = new StateGraph(AgentStateAnnotation);
@@ -116,7 +116,7 @@ export function compileAgentGraph(
           ? debateRound(state.debate?.count ?? 0)
           : RISK_TYPES.has(node.type)
             ? riskRound(state.risk?.count ?? 0)
-            : invocationsSoFar + (opts.attemptBase ?? 0);
+            : invocationsSoFar + (opts.attemptBases?.[node.id] ?? opts.attemptBase ?? 0);
       const inputSummary = `${node.label} · asOf=${state.asOf} · subject=${state.subject.label}`;
       hooks.checkCanceled();
       hooks.onNodeStarted(node, attempt, inputSummary);
@@ -202,7 +202,7 @@ export function compileAgentGraph(
         condition.kind === 'debate_rounds'
           ? routeDebate(state.debate, condition.maxRounds, condition.whenDone)
           : routeRisk(state.risk, condition.maxRounds, condition.order, condition.whenDone);
-      hooks.onRouteTaken(edge.source, next, `${condition.kind}:${condition.maxRounds}`);
+      hooks.onRouteTaken(edge.source, next, edgeRouteLabel(edge) ?? `${condition.kind}:${condition.maxRounds}`, edge.id);
       return next;
     };
     const pathMap: Record<string, string> = {
@@ -223,7 +223,7 @@ export function compileAgentGraph(
     }
   }
 
-  const checkpointer = new MemorySaver();
+  const checkpointer = opts.checkpointer ?? new MemorySaver();
   const graph = builder.compile({ checkpointer });
   return { graph: graph as CompiledAgentGraph['graph'], checkpointer };
 }

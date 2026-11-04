@@ -30,8 +30,10 @@ import {
   type AgentGraphDeleteRequest,
   type AgentGraphGetRequest,
   type AgentGraphSaveRequest,
+  type AgentPromptsSaveRequest,
   type AgentRunsListRequest,
   type EventsPageRequest,
+  type ResumeCheckpointRequest,
   type ResumeRunRequest,
   type StartRunRequest
 } from '../../shared/agent.js';
@@ -258,6 +260,8 @@ void app.whenReady().then(async () => {
       restoreDefaultGraph: () => agentRuntime.restoreDefaultGraph(),
       run: (payload) => agentRuntime.startRun((payload ?? {}) as StartRunRequest),
       resume: (payload) => agentRuntime.resumeRun((payload ?? {}) as ResumeRunRequest),
+      resumeCheckpoint: (payload) =>
+        agentRuntime.resumeCheckpoint((payload ?? {}) as ResumeCheckpointRequest),
       cancel: (payload) => {
         const p = (payload ?? {}) as { runId?: string; reason?: 'user' | 'timeout' | 'replaced' };
         return agentRuntime.cancelRun(agentRunId(payload), p.reason ?? 'user');
@@ -268,6 +272,8 @@ void app.whenReady().then(async () => {
         ),
       getRun: (payload) => agentRuntime.getRun(agentRunId(payload)),
       getEvents: (payload) => agentRuntime.getEvents((payload ?? {}) as EventsPageRequest),
+      promptsGet: () => agentRuntime.getPrompts(),
+      promptsSave: (payload) => agentRuntime.savePrompts((payload ?? {}) as AgentPromptsSaveRequest),
       memoryList: () => ({ ok: true, data: listMemoryView(getDb()) }),
       memorySettle: () => {
         try {

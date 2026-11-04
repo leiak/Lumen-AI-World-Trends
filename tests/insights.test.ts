@@ -42,8 +42,8 @@ describe('insight 仓储', () => {
     const v = (stmt.getAsObject() as { value: string }).value;
     stmt.free();
     db.close();
-    // P5：schema 14 新增 agent_run.suspend_json（跨进程审批恢复）。
-    expect(v).toBe('14');
+    // P7：schema 16 新增 checkpoint 持久化表与 run recovery_json 列。
+    expect(v).toBe('16');
   });
 });
 

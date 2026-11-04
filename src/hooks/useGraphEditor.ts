@@ -34,6 +34,9 @@ type Action =
   | { type: 'removeNodes'; ids: string[] }
   | { type: 'removeEdges'; ids: string[] }
   | { type: 'connect'; source: string; target: string }
+  | { type: 'edgeCondition'; edgeId: string; kind: 'always' | 'debate_rounds' | 'risk_rounds' }
+  | { type: 'edgeTarget'; edgeId: string; value: string }
+  | { type: 'edgeWhenDone'; edgeId: string; value: string }
   | { type: 'saveStart' }
   | { type: 'saveOk'; spec: GraphSpec; digest: string; at: string }
   | { type: 'saveFail'; issues: GraphSpecIssue[]; message: string }
@@ -113,6 +116,61 @@ function syncRiskRounds(spec: GraphSpec, rounds: number): GraphSpec {
     edges: spec.edges.map((e) =>
       e.condition?.kind === 'risk_rounds'
         ? { ...e, condition: { ...e.condition, maxRounds: rounds } }
+        : e
+    )
+  };
+}
+
+const RISK_TYPE_ORDER = ['risk_aggressive', 'risk_conservative', 'risk_neutral'] as const;
+
+function riskOrder(spec: GraphSpec): string[] {
+  const existing = spec.edges.find((e) => e.condition?.kind === 'risk_rounds')?.condition;
+  if (existing && existing.kind === 'risk_rounds') return existing.order;
+  return RISK_TYPE_ORDER.map((t) => spec.nodes.find((n) => n.type === t)?.id).filter(
+    (id): id is string => typeof id === 'string'
+  );
+}
+
+function findNodeId(spec: GraphSpec, type: AgentNodeType): string | undefined {
+  return spec.nodes.find((n) => n.type === type)?.id;
+}
+
+/** 切换条件类型时给出“合法默认值”；非法源节点仍保留原目标，交给服务端拒绝并定位。 */
+function applyEdgeCondition(
+  spec: GraphSpec,
+  edgeId: string,
+  kind: 'always' | 'debate_rounds' | 'risk_rounds'
+): GraphSpec {
+  const edge = spec.edges.find((e) => e.id === edgeId);
+  if (!edge) return spec;
+  if (kind === 'always') {
+    return {
+      ...spec,
+      edges: spec.edges.map((e) => (e.id === edgeId ? { ...e, condition: undefined } : e))
+    };
+  }
+  let target = edge.target;
+  let whenDone = '';
+  let order: string[] | undefined;
+  if (kind === 'debate_rounds') {
+    const counterpart = edge.source === findNodeId(spec, 'bull') ? findNodeId(spec, 'bear') :
+      edge.source === findNodeId(spec, 'bear') ? findNodeId(spec, 'bull') : undefined;
+    if (counterpart) target = counterpart;
+    whenDone = findNodeId(spec, 'judge') ?? findNodeId(spec, 'final') ?? '';
+  } else {
+    order = riskOrder(spec);
+    const idx = order.indexOf(edge.source);
+    if (idx >= 0) target = order[(idx + 1) % order.length];
+    whenDone = findNodeId(spec, 'planner') ?? findNodeId(spec, 'final') ?? '';
+  }
+  const maxRounds = kind === 'debate_rounds' ? spec.settings.maxDebateRounds : spec.settings.maxRiskRounds;
+  return {
+    ...spec,
+    edges: spec.edges.map((e) =>
+      e.id === edgeId
+        ? { ...e, target, condition: kind === 'debate_rounds'
+            ? { kind, maxRounds, whenDone }
+            : { kind, maxRounds, whenDone, order: order ?? riskOrder(spec) } }
         : e
     )
   };
@@ -242,6 +300,25 @@ function reducer(state: GraphEditorState, action: Action): GraphEditorState {
       next = { ...spec, edges: spec.edges.filter((e) => !ids.has(e.id)) };
       break;
     }
+    case 'edgeCondition':
+      next = applyEdgeCondition(spec, action.edgeId, action.kind);
+      break;
+    case 'edgeTarget':
+      next = {
+        ...spec,
+        edges: spec.edges.map((e) => (e.id === action.edgeId ? { ...e, target: action.value } : e))
+      };
+      break;
+    case 'edgeWhenDone':
+      next = {
+        ...spec,
+        edges: spec.edges.map((e) =>
+          e.id === action.edgeId && e.condition && e.condition.kind !== 'always'
+            ? { ...e, condition: { ...e.condition, whenDone: action.value } }
+            : e
+        )
+      };
+      break;
     case 'connect': {
       if (action.source === action.target) {
         error = '不允许自环';
@@ -306,6 +383,18 @@ export function useGraphEditor() {
   const connect = useCallback((source: string, target: string) => {
     dispatch({ type: 'connect', source, target });
   }, []);
+  const setEdgeCondition = useCallback(
+    (edgeId: string, kind: 'always' | 'debate_rounds' | 'risk_rounds') => {
+      dispatch({ type: 'edgeCondition', edgeId, kind });
+    },
+    []
+  );
+  const setEdgeTarget = useCallback((edgeId: string, value: string) => {
+    dispatch({ type: 'edgeTarget', edgeId, value });
+  }, []);
+  const setEdgeWhenDone = useCallback((edgeId: string, value: string) => {
+    dispatch({ type: 'edgeWhenDone', edgeId, value });
+  }, []);
   const saveStart = useCallback(() => dispatch({ type: 'saveStart' }), []);
   const saveOk = useCallback((spec: GraphSpec, digest: string, at: string) => {
     dispatch({ type: 'saveOk', spec, digest, at });
@@ -327,6 +416,9 @@ export function useGraphEditor() {
     removeNodes,
     removeEdges,
     connect,
+    setEdgeCondition,
+    setEdgeTarget,
+    setEdgeWhenDone,
     saveStart,
     saveOk,
     saveFail,

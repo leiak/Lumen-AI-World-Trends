@@ -40,6 +40,7 @@ export const ALL_CHANNELS = [
   'agent:run',
   'agent:resume',
   'agent:runs:resume',
+  'agent:runs:resumeCheckpoint',
   'agent:cancel',
   'agent:runs:list',
   'agent:runs:get',
@@ -50,7 +51,9 @@ export const ALL_CHANNELS = [
   'agent:graphs:delete',
   'agent:graphs:restoreDefault',
   'agent:memory:list',
-  'agent:memory:settle'
+  'agent:memory:settle',
+  'agent:prompts:get',
+  'agent:prompts:save'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

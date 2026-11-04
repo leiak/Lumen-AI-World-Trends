@@ -35,14 +35,15 @@ function tmpDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
 }
 
-async function launch(userDataDir, mockDelayMs = 60) {
+async function launch(userDataDir, mockDelayMs = 60, extraEnv = {}) {
   const app = await electron.launch({
     args: ['.', `--user-data-dir=${userDataDir}`],
     cwd: ROOT,
     env: {
       ...process.env,
       // 仅 E2E：让 Mock 输出有可观察的耗时，稳定命中 running 态；不影响生产/单测。
-      LUMEN_MOCK_DELAY_MS: String(mockDelayMs)
+      LUMEN_MOCK_DELAY_MS: String(mockDelayMs),
+      ...extraEnv
     },
     timeout: 30000
   });
@@ -116,7 +117,7 @@ async function queryDb(dbPath, fn) {
 }
 
 async function main() {
-  console.log('P5 E2E — Electron + Playwright\n');
+  console.log('P6 E2E — Electron + Playwright\n');
   const dirA = tmpDir('lumen-e2e-a');
   const dbA = path.join(dirA, 'lumen.db');
 
@@ -480,6 +481,372 @@ async function main() {
     } finally {
       await closeApp(app);
     }
+  });
+
+  // ————————————————————————————————————————————————————————————————
+  await scenario('S7 条件边编辑：非法目标被定位拒绝；修正后保存并真实路由到该 edgeId', async () => {
+    const dirF = tmpDir('lumen-e2e-f');
+    const dbF = path.join(dirF, 'lumen.db');
+    let runIdF = '';
+    const { app, page } = await launch(dirF);
+    try {
+      await openAgent(page);
+      const beforeVersion = await page.getAttribute('[data-testid="agent-graph-version"]', 'data-version');
+      await page.click('[data-testid="agent-edit-toggle"]');
+      await page.waitForSelector('[data-testid="agent-editor-panel"]', { timeout: 20000 });
+      await page.waitForSelector('[data-testid="agent-route-preview"]', { timeout: 20000 });
+
+      // 保存前路由预览 → 点击定位到具体条件边。
+      await page.click('[data-testid="agent-route-item"][data-edge-id="e-bull-bear"]');
+      await page.waitForSelector('[data-testid="agent-edge-inspector"][data-edge-id="e-bull-bear"]', {
+        timeout: 20000
+      });
+      const routeLabel = (await page.textContent('[data-testid="agent-edge-route-label"]')) ?? '';
+      if (!routeLabel.includes('辩论：第 2 轮后')) throw new Error(`路由标签不可读：${routeLabel}`);
+
+      // 非法目标（bull 条件边指向 judge）必须被拒并带 edgeId 定位。
+      await page.selectOption('[data-testid="agent-edge-target"]', 'judge');
+      await page.click('[data-testid="agent-editor-save"]');
+      await page.waitForSelector('[data-testid="agent-editor-locate-edge"][data-edge-id="e-bull-bear"]', {
+        timeout: 20000
+      });
+      const edgeError = (await page.textContent('[data-testid="agent-edge-error"]')) ?? '';
+      if (!edgeError.includes('对立方')) throw new Error(`边级错误未定位到目标白名单：${edgeError}`);
+      const stillDirty = await page.getAttribute('[data-testid="agent-edge-inspector"]', 'data-edge-id');
+      if (stillDirty !== 'e-bull-bear') throw new Error('非法保存后未保留边选择/定位');
+
+      // 修正目标后保存成功，图版本推进，错误清空。
+      await page.selectOption('[data-testid="agent-edge-target"]', 'bear');
+      await page.click('[data-testid="agent-editor-save"]');
+      await page.waitForFunction(
+        (prev) => {
+          const el = document.querySelector('[data-testid="agent-graph-version"]');
+          return !!el && el.getAttribute('data-version') !== prev;
+        },
+        beforeVersion,
+        { timeout: 30000, polling: 25 }
+      );
+      await page.waitForFunction(
+        () => document.querySelectorAll('[data-testid="agent-editor-locate-edge"]').length === 0,
+        null,
+        { timeout: 20000, polling: 25 }
+      );
+      await page.click('[data-testid="agent-edit-toggle"]');
+
+      // 真实运行：条件边必须进入 route.taken（落库断言具体 edgeId）。
+      await page.waitForSelector('[data-testid="agent-start"]:not([disabled])', { timeout: 20000 });
+      await page.click('[data-testid="agent-start"]');
+      await page.waitForSelector('[data-testid="agent-approval"]', { timeout: 30000 });
+      runIdF = (await page.textContent('[data-testid="agent-run-id"]')).trim();
+    } finally {
+      await closeApp(app);
+    }
+
+    const routes = await queryDb(dbF, (db) => {
+      const r = db.exec(
+        `SELECT payload_json FROM agent_run_event WHERE run_id = '${runIdF}' AND type = 'route.taken'`
+      );
+      return (r[0]?.values ?? []).map((v) => JSON.parse(v[0]));
+    });
+    const bullRoute = routes.find((e) => e.event?.from === 'bull');
+    if (!bullRoute || bullRoute.event.edgeId !== 'e-bull-bear') {
+      throw new Error(`route.taken 未指向保存的条件边：${JSON.stringify(routes.map((e) => e.event))}`);
+    }
+    if (!String(bullRoute.event.condition).includes('辩论：第 2 轮后')) {
+      throw new Error(`route.taken 条件标签不可读：${bullRoute.event.condition}`);
+    }
+  });
+
+  // ————————————————————————————————————————————————————————————————
+  await scenario('S8 prompt 编辑：非法占位符定位拒绝；版本绑定且旧 run 回放不串味', async () => {
+    const dirG = tmpDir('lumen-e2e-g');
+    const dbG = path.join(dirG, 'lumen.db');
+    let runIdG = '';
+    let v1 = 0;
+    let v2 = 0;
+    const { app, page } = await launch(dirG);
+    try {
+      await openAgent(page);
+      await page.click('[data-testid="agent-prompt-toggle"]');
+      await page.waitForSelector('[data-testid="agent-prompt-editor"]', { timeout: 20000 });
+      if (!(await page.textContent('[data-testid="agent-prompt-risk"]'))?.trim()) {
+        throw new Error('prompt 编辑器缺少显式风险提示');
+      }
+      const startVersion = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
+
+      // 非法占位符：保存被拒，issue 可点击定位（role/offset）。
+      await page.fill('[data-testid="agent-prompt-textarea-evidence"]', '{{env.ARK_API_KEY}}');
+      if ((await page.getAttribute('[data-testid="agent-prompt-dirty"]', 'data-dirty')) !== '1') {
+        throw new Error('编辑后未进入未保存态');
+      }
+      await page.click('[data-testid="agent-prompt-save"]');
+      await page.waitForSelector('[data-testid="agent-prompt-issue"][data-role="evidence"]', {
+        timeout: 20000
+      });
+      const issueText = (await page.textContent('[data-testid="agent-prompt-issue"]')) ?? '';
+      if (!issueText.includes('不允许的占位符')) throw new Error(`占位符错误未定位：${issueText}`);
+      const afterInvalid = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
+      if (afterInvalid !== startVersion) throw new Error('非法保存不应产生新版本');
+
+      // 合法自定义 prompt 保存为 v1。
+      const markerA = 'E2E-PROMPT-MARKER-A：你是「世界趋势取证分析师」，围绕 {{subject.label}} 取证。';
+      await page.fill('[data-testid="agent-prompt-textarea-evidence"]', markerA);
+      await page.click('[data-testid="agent-prompt-save"]');
+      await page.waitForFunction(
+        (prev) => {
+          const el = document.querySelector('[data-testid="agent-prompt-version"]');
+          return !!el && Number(el.getAttribute('data-version')) > prev;
+        },
+        startVersion,
+        { timeout: 20000, polling: 25 }
+      );
+      if ((await page.getAttribute('[data-testid="agent-prompt-dirty"]', 'data-dirty')) !== '0') {
+        throw new Error('保存成功后未清除未保存态');
+      }
+      v1 = Number(await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version'));
+      await page.click('[data-testid="agent-prompt-close"]');
+
+      await page.waitForSelector('[data-testid="agent-start"]:not([disabled])', { timeout: 20000 });
+      await page.click('[data-testid="agent-start"]');
+      await page.waitForSelector('[data-testid="agent-approval"]', { timeout: 30000 });
+      runIdG = (await page.textContent('[data-testid="agent-run-id"]')).trim();
+      const runPromptVersion = await page
+        .locator('[data-testid="agent-run-prompt-version"]')
+        .first()
+        .getAttribute('data-version');
+      if (Number(runPromptVersion) !== v1) throw new Error(`run 应绑定 v${v1}，实际 v${runPromptVersion}`);
+
+      // 再次编辑为 v2：当前 run 回放仍必须使用 v1。
+      await page.click('[data-testid="agent-prompt-toggle"]');
+      await page.waitForSelector('[data-testid="agent-prompt-textarea-evidence"]', { timeout: 20000 });
+      const markerB = 'E2E-PROMPT-MARKER-B：你是「世界趋势取证分析师」，只关注 {{subject.key}} 动量。';
+      await page.fill('[data-testid="agent-prompt-textarea-evidence"]', markerB);
+      await page.click('[data-testid="agent-prompt-save"]');
+      await page.waitForFunction(
+        (prev) => {
+          const el = document.querySelector('[data-testid="agent-prompt-version"]');
+          return !!el && Number(el.getAttribute('data-version')) > prev;
+        },
+        v1,
+        { timeout: 20000, polling: 25 }
+      );
+      v2 = Number(await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version'));
+      await page.click('[data-testid="agent-prompt-close"]');
+
+      await page.click(`[data-testid="agent-run-row"][data-run-id="${runIdG}"]`);
+      await page.waitForSelector('[data-testid="agent-approval"]', { timeout: 20000 });
+      const replayVersion = await page
+        .locator('[data-testid="agent-run-prompt-version"]')
+        .first()
+        .getAttribute('data-version');
+      if (Number(replayVersion) !== v1) {
+        throw new Error(`旧 run 回放串味：应为 v${v1}，实际 v${replayVersion}`);
+      }
+    } finally {
+      await closeApp(app);
+    }
+
+    await queryDb(dbG, (db) => {
+      const run = db.exec(
+        `SELECT prompt_version, prompt_digest, prompt_json FROM agent_run WHERE run_id = '${runIdG}'`
+      );
+      const row = run[0]?.values[0];
+      if (!row) throw new Error('run 记录缺少 prompt 绑定列');
+      if (Number(row[0]) !== v1) throw new Error(`落库 prompt_version 应为 ${v1}，实际 ${row[0]}`);
+      if (!String(row[2]).includes('E2E-PROMPT-MARKER-A')) throw new Error('落库 prompt_json 不是启动时版本');
+      const packs = db.exec(`SELECT version, digest, is_active FROM agent_prompt_pack ORDER BY version`);
+      const rows = packs[0]?.values ?? [];
+      const active = rows.find((r) => Number(r[2]) === 1);
+      if (!active || Number(active[0]) !== v2) throw new Error(`活动 prompt 版本应为 v${v2}`);
+      const bound = rows.find((r) => Number(r[0]) === v1);
+      if (!bound || row[1] !== bound[1]) throw new Error('run prompt_digest 与绑定版本包摘要不一致');
+    });
+  });
+
+  // ————————————————————————————————————————————————————————————————
+  // P7：任意断点续跑。进程 A 在 planner 执行中被强杀（非审批挂起），
+  // 进程 B 启动后从 checkpoint 恢复；恢复不会重跑已完成节点，且仍遵守 final 审批闸门。
+  await scenario('S9 中途强杀→重启→checkpoint 恢复→审批→completed（已完成节点不重跑）', async () => {
+    const dirP = tmpDir('lumen-e2e-p');
+    const dbP = path.join(dirP, 'lumen.db');
+    let runIdP = '';
+
+    // immediate：每个 checkpoint/write 同步落盘，强杀时进度不丢。
+    // persist 间隔调大：避免后台定时 export，制造可预测的崩溃点。
+    const a = await launch(dirP, 500, {
+      LUMEN_CHECKPOINT_FLUSH: 'immediate',
+      LUMEN_PERSIST_INTERVAL_MS: '600000'
+    });
+    try {
+      await openAgent(a.page);
+      await a.page.waitForSelector('[data-testid="agent-start"]:not([disabled])', { timeout: 20000 });
+      await a.page.click('[data-testid="agent-start"]');
+      // 等 planner 真正处于 running：此前 memory/evidence/辩论/judge 均已落库。
+      await a.page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-testid="agent-node-planner"]')
+            ?.getAttribute('data-status') === 'running',
+        null,
+        { timeout: 30000, polling: 20 }
+      );
+      runIdP = (await a.page.textContent('[data-testid="agent-run-id"]')).trim();
+      // 等一次同步 export 完成后强杀（此刻没有后台定时 export，窗口安全）。
+      await new Promise((r) => setTimeout(r, 80));
+      a.app.process()?.kill();
+      await new Promise((r) => setTimeout(r, 300));
+    } finally {
+      await closeApp(a.app);
+    }
+
+    const before = await queryDb(dbP, (db) => {
+      const run = db.exec(
+        `SELECT status, recovery_json, calls FROM agent_run WHERE run_id = '${runIdP}'`
+      );
+      const nodes = db.exec(
+        `SELECT node_id, attempt, status, ended_at FROM agent_node_result WHERE run_id = '${runIdP}'`
+      );
+      const seq = db.exec(`SELECT MAX(seq) AS m FROM agent_run_event WHERE run_id = '${runIdP}'`);
+      const cp = db.exec(`SELECT COUNT(*) AS n FROM agent_run_checkpoint WHERE run_id = '${runIdP}'`);
+      const row = run[0]?.values[0] ?? [];
+      return {
+        status: row[0],
+        recovery: row[1],
+        calls: Number(row[2] ?? 0),
+        nodes: (nodes[0]?.values ?? []).map((v) => ({
+          nodeId: v[0],
+          attempt: Number(v[1]),
+          status: v[2],
+          endedAt: v[3]
+        })),
+        maxSeq: Number(seq[0]?.values[0]?.[0] ?? 0),
+        checkpoints: Number(cp[0]?.values[0]?.[0] ?? 0)
+      };
+    });
+    if (before.status !== 'running') throw new Error(`强杀后应保留 running：${before.status}`);
+    if (before.checkpoints < 1) throw new Error('强杀后磁盘上应有 checkpoint');
+    if (before.nodes.filter((n) => n.status === 'succeeded').length < 4) {
+      throw new Error('崩溃点过早：已成功节点不足以验证“不重跑”');
+    }
+
+    const b = await launch(dirP, 300, {
+      LUMEN_CHECKPOINT_FLUSH: 'immediate',
+      LUMEN_PERSIST_INTERVAL_MS: '600000'
+    });
+    try {
+      await openAgent(b.page);
+      const rowSel = `[data-testid="agent-run-row"][data-run-id="${runIdP}"]`;
+      await b.page.waitForSelector(rowSel, { timeout: 20000 });
+      const st = await b.page.getAttribute(rowSel, 'data-status');
+      if (st !== 'interrupted') throw new Error(`启动恢复应标记 interrupted，实际 ${st}`);
+      await b.page.click(rowSel);
+      // 可恢复卡片（而非审批卡片）出现。
+      await b.page.waitForSelector('[data-testid="agent-recovery"]', { timeout: 20000 });
+      if (await b.page.isVisible('[data-testid="agent-approval"]')) {
+        throw new Error('checkpoint 恢复不应展示审批卡');
+      }
+      const cpId = await b.page.getAttribute('[data-testid="agent-recovery"]', 'data-checkpoint-id');
+      if (!cpId) throw new Error('恢复卡片缺少 checkpointId');
+      await b.page.click('[data-testid="agent-recovery-resume"]');
+      // 续跑会再次走到 final 审批闸门（P5 行为不被 P7 破坏）。
+      await b.page.waitForSelector('[data-testid="agent-approval"]', { timeout: 30000 });
+      await b.page.click('[data-testid="agent-approve"]');
+      await waitStatus(b.page, 'completed', 30000);
+      const rating = await b.page.getAttribute('[data-testid="agent-rating"]', 'data-rating');
+      if (!rating) throw new Error('恢复完成后结论卡缺少评级');
+    } finally {
+      await closeApp(b.app);
+    }
+
+    const after = await queryDb(dbP, (db) => {
+      const run = db.exec(
+        `SELECT status, suspend_json, recovery_json, calls FROM agent_run WHERE run_id = '${runIdP}'`
+      );
+      const nodes = db.exec(
+        `SELECT node_id, attempt, status, ended_at FROM agent_node_result WHERE run_id = '${runIdP}'`
+      );
+      const seq = db.exec(
+        `SELECT seq, payload_json FROM agent_run_event WHERE run_id = '${runIdP}' ORDER BY seq`
+      );
+      const cp = db.exec(`SELECT COUNT(*) AS n FROM agent_run_checkpoint WHERE run_id = '${runIdP}'`);
+      const row = run[0]?.values[0] ?? [];
+      return {
+        status: row[0],
+        suspend: row[1],
+        recovery: row[2],
+        calls: Number(row[3] ?? 0),
+        nodes: (nodes[0]?.values ?? []).map((v) => ({
+          nodeId: v[0],
+          attempt: Number(v[1]),
+          status: v[2],
+          endedAt: v[3]
+        })),
+        events: (seq[0]?.values ?? []).map((v) => ({ seq: Number(v[0]), payload: v[1] })),
+        checkpoints: Number(cp[0]?.values[0]?.[0] ?? 0)
+      };
+    });
+    if (after.status !== 'completed') throw new Error(`进程 B 完成后状态应为 completed：${after.status}`);
+    if (after.suspend !== null || after.recovery !== null) throw new Error('完成后 suspend/recovery 未清理');
+    if (after.checkpoints !== 0) throw new Error('完成后 checkpoint 未清理');
+    if (after.calls <= before.calls) throw new Error('用量未累加（重启后 calls 未增长）');
+
+    // 已成功节点：崩溃前的 (nodeId, attempt) 记录必须原样保留，且不新增 attempt。
+    const beforeSucceeded = new Map(
+      before.nodes
+        .filter((n) => n.status === 'succeeded')
+        .map((n) => [`${n.nodeId}:${n.attempt}`, n.status])
+    );
+    for (const [key] of beforeSucceeded) {
+      const found = after.nodes.find((n) => key === `${n.nodeId}:${n.attempt}`);
+      if (!found || found.status !== 'succeeded') {
+        throw new Error(`已完成节点 ${key} 在恢复后丢失/被改写`);
+      }
+    }
+    const beforeNodeCount = new Map();
+    for (const n of before.nodes) beforeNodeCount.set(n.nodeId, (beforeNodeCount.get(n.nodeId) ?? 0) + 1);
+    for (const n of after.nodes) {
+      const wasComplete = [...beforeSucceeded.keys()].some((k) => k.startsWith(`${n.nodeId}:`));
+      const beforeCount = beforeNodeCount.get(n.nodeId) ?? 0;
+      const afterCount = after.nodes.filter((x) => x.nodeId === n.nodeId).length;
+      if (wasComplete && afterCount > beforeCount) {
+        throw new Error(`已完成节点 ${n.nodeId} 在恢复后新增了执行记录：${beforeCount} → ${afterCount}`);
+      }
+    }
+
+    // seq 跨重启连续；run.resumed 出现在重启后；同一 (nodeId, attempt) 的 started 只有一次。
+    const seqs = after.events.map((e) => e.seq);
+    for (let i = 1; i < seqs.length; i++) {
+      if (seqs[i] !== seqs[i - 1] + 1) throw new Error(`seq 不连续：${seqs[i - 1]} → ${seqs[i]}`);
+    }
+    if (seqs[0] !== 1) throw new Error(`seq 应从 1 开始，实际 ${seqs[0]}`);
+    if (after.events.length <= before.maxSeq) throw new Error('重启后没有新增事件');
+    const startedKeys = new Map();
+    for (const e of after.events) {
+      let parsed;
+      try {
+        parsed = JSON.parse(e.payload);
+      } catch {
+        continue;
+      }
+      if (parsed.event?.type !== 'node.started') continue;
+      const key = `${parsed.event.nodeId}#${parsed.event.attempt}`;
+      startedKeys.set(key, (startedKeys.get(key) ?? 0) + 1);
+    }
+    for (const [key, count] of startedKeys) {
+      if (count !== 1) throw new Error(`节点 ${key} 的 started 事件出现 ${count} 次`);
+    }
+    const resumed = after.events.find((e) => {
+      try {
+        return JSON.parse(e.payload).event?.type === 'run.resumed';
+      } catch {
+        return false;
+      }
+    });
+    if (!resumed || resumed.seq <= before.maxSeq) throw new Error('run.resumed 未出现在重启后的新 seq');
   });
 
   console.log('');

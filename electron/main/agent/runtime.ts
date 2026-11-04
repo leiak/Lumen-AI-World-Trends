@@ -13,6 +13,12 @@ import type {
   AgentIpcResponse,
   AgentRunDetail,
   AgentRunsListRequest,
+  AgentPromptIssue,
+  AgentPromptPackSnapshot,
+  AgentPromptRole,
+  AgentPromptsGetResponse,
+  AgentPromptsSaveRequest,
+  AgentPromptsSaveResponse,
   AgentRunSummary,
   ApprovalContext,
   ApprovalResolution,
@@ -24,6 +30,8 @@ import type {
   GraphSpec,
   GraphSpecIssue,
   JsonObject,
+  ResumeCheckpointRequest,
+  ResumeCheckpointResponse,
   ResumeRunRequest,
   ResumeRunResponse,
   RunEventEnvelope,
@@ -32,9 +40,18 @@ import type {
   StartRunRequest,
   StartRunResponse
 } from '../../../shared/agent.js';
+import { AGENT_PROMPT_ROLES } from '../../../shared/agent.js';
 import type { AiProvider, ChatMessage } from '../ai/provider.js';
+import { DEFAULT_PROMPT_PACK, validatePromptText } from './prompt-policy.js';
 import { RunEventBus } from './events.js';
 import { compileAgentGraph, type CompiledAgentGraph, type GraphRunHooks } from './graph.js';
+import {
+  CheckpointCorruptError,
+  SqlJsCheckpointSaver,
+  inspectLatestCheckpoint,
+  type CheckpointStats
+} from './checkpoint.js';
+import { createPersistScheduler, type PersistScheduler, type PersistSchedulerStats } from './persist.js';
 import {
   AgentCanceledError,
   AgentRuntimeError,
@@ -85,6 +102,8 @@ interface Execution {
   options: RunOptions;
   provider: AiProvider;
   isMock: boolean;
+  /** P6：本 run 绑定到启动瞬间的 prompt 版本，后续编辑不影响本次执行。 */
+  prompt: AgentPromptPackSnapshot;
   usage: RunUsage;
   startedAtMs: number;
   deadline: number;
@@ -93,6 +112,8 @@ interface Execution {
   bus: RunEventBus;
   graph: CompiledAgentGraph['graph'];
   nodeDeps: AgentNodeDeps;
+  /** P7：本 run 的 checkpoint saver；P5 的 restart_resume 小图不落 checkpoint。 */
+  checkpointSaver?: SqlJsCheckpointSaver;
   /** 最近一次 node.started，用于 interrupt 时把挂起节点标为 skipped。 */
   lastStarted: { nodeId: string; attempt: number; startedMs: number } | null;
 }
@@ -139,15 +160,35 @@ export class AgentRuntime {
   private readonly suspended = new Map<string, Execution>();
   private readonly now: () => string;
   private readonly newRunId: () => string;
+  /** P7：合并落盘调度器；所有 repo/checkpoint 写入都走它，终态再强制 flush。 */
+  private readonly persistScheduler: PersistScheduler;
+  /** P7：每个 run 的 checkpoint saver 保留统计数据，供验收报告读取。 */
+  private readonly checkpointSavers = new Map<string, SqlJsCheckpointSaver>();
+  private readonly immediateCheckpointFlush: boolean;
   /** 节点执行上下文：并发节点各自持有，token 事件因此不会串台。 */
   private readonly nodeContext = new AsyncLocalStorage<NodeTokenContext>();
 
   constructor(private readonly deps: AgentRuntimeDeps) {
-    this.repo = createAgentRepository(deps.db, deps.persist);
+    const interval = Number(process.env.LUMEN_PERSIST_INTERVAL_MS);
+    this.persistScheduler = createPersistScheduler(deps.persist, {
+      minIntervalMs: Number.isFinite(interval) && interval > 0 ? interval : 1000
+    });
+    this.immediateCheckpointFlush = process.env.LUMEN_CHECKPOINT_FLUSH === 'immediate';
+    this.repo = createAgentRepository(deps.db, () => this.persistScheduler.request());
     this.now = deps.now ?? (() => new Date().toISOString());
     this.newRunId =
       deps.newRunId ??
       (() => `run_${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}_${randomUUID().slice(0, 8)}`);
+  }
+
+  /** P7：真实验收用，报告一次 run 的 checkpoint 写入 / export 次数。 */
+  checkpointStats(runId: string): {
+    checkpoints: CheckpointStats;
+    persist: PersistSchedulerStats;
+  } | null {
+    const saver = this.checkpointSavers.get(runId);
+    if (!saver) return null;
+    return { checkpoints: saver.stats(), persist: this.persistScheduler.stats() };
   }
 
   ensureDefaultGraph(spec: GraphSpec): boolean {
@@ -307,10 +348,45 @@ export class AgentRuntime {
     return ok({ runId: req.runId, events, nextSeq });
   }
 
+  /** P6：当前生效的角色 prompt 包。 */
+  getPrompts(): AgentIpcResponse<AgentPromptsGetResponse> {
+    return ok({ pack: this.repo.getActivePromptPack() });
+  }
+
+  /** P6：保存 prompt 编辑；所有角色错误一次收集，失败即不产生新版本。 */
+  savePrompts(req: AgentPromptsSaveRequest): AgentIpcResponse<AgentPromptsSaveResponse> {
+    const raw = (req as { prompts?: unknown } | undefined)?.prompts;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      return error('E_VALIDATION', 'prompts 必须是角色到文本的对象');
+    }
+    const allowed = new Set<string>(AGENT_PROMPT_ROLES);
+    const issues: AgentPromptIssue[] = [];
+    const incoming: Partial<Record<AgentPromptRole, string>> = {};
+    for (const [role, value] of Object.entries(raw)) {
+      if (!allowed.has(role)) {
+        return error('E_VALIDATION', `未知 prompt 角色: ${role}`);
+      }
+      if (typeof value !== 'string') {
+        return error('E_VALIDATION', `角色 ${role} 的 prompt 必须是字符串`);
+      }
+      issues.push(...validatePromptText(role as AgentPromptRole, value));
+      incoming[role as AgentPromptRole] = value;
+    }
+    if (issues.length > 0) {
+      return error('E_VALIDATION', 'prompt 校验失败', { issues });
+    }
+    const current = this.repo.getActivePromptPack();
+    const pack = this.repo.savePromptPack({ ...current.prompts, ...incoming });
+    return ok({ pack });
+  }
+
   /** P5：启动清理。带合法挂起快照的 interrupted 保留为可恢复；
    *  其余残留 run（queued/running/损坏快照）降级为 failed + E_PROCESS_RESTART。 */
   markInterruptedFromPreviousProcess(): { recoverable: number; failed: number } {
-    return this.repo.recoverPreviousProcessRuns(this.now());
+    const result = this.repo.recoverPreviousProcessRuns(this.now());
+    // 启动恢复结论（interrupted/failed）必须立刻落盘，避免再次重启时状态回到 running。
+    this.persistScheduler.flushNow();
+    return result;
   }
 
   async startRun(req: StartRunRequest): Promise<AgentIpcResponse<StartRunResponse>> {
@@ -339,6 +415,12 @@ export class AgentRuntime {
     }
     const spec = validated.spec;
     const graphDigest = record.digest;
+    const activePrompt = this.repo.getActivePromptPack();
+    const promptSnapshot: AgentPromptPackSnapshot = {
+      version: activePrompt.version,
+      digest: activePrompt.digest,
+      prompts: activePrompt.prompts
+    };
 
     const isMock = options.forceMock === true || this.deps.provider.name === 'mock';
     const provider = options.forceMock ? this.deps.mockProvider : this.deps.provider;
@@ -354,7 +436,8 @@ export class AgentRuntime {
       asOf,
       startedAt,
       config: options,
-      model: provider.name
+      model: provider.name,
+      prompt: promptSnapshot
     });
 
     const ctx: ActiveRun = {
@@ -372,7 +455,8 @@ export class AgentRuntime {
       asOf,
       options,
       provider,
-      isMock
+      isMock,
+      promptSnapshot
     );
     this.active.set(runId, ctx);
     ctx.execution = this.drive(execution, { kind: 'start' }).finally(() => {
@@ -414,6 +498,8 @@ export class AgentRuntime {
           endedAt: this.now(),
           state: detail.state
         });
+        this.repo.deleteRunCheckpoints(runId);
+        this.persistScheduler.flushNow();
       }
       return ok({ runId, status: 'canceled', alreadyTerminal: false });
     }
@@ -458,6 +544,8 @@ export class AgentRuntime {
       usage: execution.usage
     });
     bus.emit({ type: 'run.canceled', reason });
+    this.repo.deleteRunCheckpoints(execution.runId);
+    this.persistScheduler.flushNow();
   }
 
   /** 人工审批恢复：只在 interrupted 且进程内仍保留挂起图时可用。
@@ -481,6 +569,13 @@ export class AgentRuntime {
     if (!detail) return error('E_RUN_NOT_FOUND', `未找到运行: ${runId}`);
     if (detail.status !== 'interrupted') {
       return error('E_RUN_TERMINAL', `运行状态为 ${detail.status}，不可恢复`);
+    }
+    // P7：等待人工审批的 interrupted 与等待断点续跑的 interrupted 必须走不同路径。
+    if (!this.suspended.has(runId) && this.repo.getRunRecovery(runId)) {
+      return error(
+        'E_RESUME_NO_CHECKPOINT',
+        '该运行没有待审批事项，应从 checkpoint 断点续跑（继续运行）'
+      );
     }
     let execution = this.suspended.get(runId);
     /** 进程重启路径：没有内存中的执行器，用持久化快照重建 final-only 图。 */
@@ -574,6 +669,8 @@ export class AgentRuntime {
         usage: execution.usage
       });
       bus.emit({ type: 'run.canceled', reason: 'rejected' });
+      this.repo.deleteRunCheckpoints(runId);
+      this.persistScheduler.flushNow();
       return ok({ runId, status: 'canceled', resumedAt: this.now() });
     }
 
@@ -606,6 +703,136 @@ export class AgentRuntime {
       if (this.active.get(runId) === ctx) this.active.delete(runId);
     });
     return ok({ runId, status: 'running', resumedAt: this.now() });
+  }
+
+  /**
+   * P7：任意断点续跑。策略为“启动只标记可恢复，用户在 UI 手动继续”，理由：
+   *  1) 真实模型调用会产生费用，静默自动续跑不可解释；
+   *  2) 用户可能在崩溃后想先查看已完成节点与中间结论；
+   *  3) 与 P5 审批挂起保持同一交互心智：interrupted 永远需要用户动作。
+   */
+  async resumeCheckpoint(
+    req: ResumeCheckpointRequest
+  ): Promise<AgentIpcResponse<ResumeCheckpointResponse>> {
+    if (!req || typeof req.runId !== 'string' || req.runId.length === 0) {
+      return error('E_VALIDATION', 'runId 不能为空');
+    }
+    const runId = req.runId;
+    const detail = this.repo.getRunDetail(runId);
+    if (!detail) return error('E_RUN_NOT_FOUND', `未找到运行: ${runId}`);
+    if (detail.status !== 'interrupted') {
+      return error('E_RUN_TERMINAL', `运行状态为 ${detail.status}，不可重复续跑`);
+    }
+    if (this.active.size > 0) {
+      return error('E_RUN_ACTIVE', '已有运行进行中，请先等待完成');
+    }
+    const recovery = this.repo.getRunRecovery(runId);
+    if (!recovery) {
+      if (this.suspended.get(runId) || this.repo.getRunSuspend(runId)) {
+        return error('E_RESUME_NO_CHECKPOINT', '该运行等待人工审批，请使用审批恢复');
+      }
+      this.repo.updateRunTerminal({
+        runId,
+        status: 'failed',
+        endedAt: this.now(),
+        errorCode: 'E_PROCESS_RESTART',
+        errorMessage: '缺少断点恢复元数据，无法续跑'
+      });
+      this.persistScheduler.flushNow();
+      return error('E_PROCESS_RESTART', '缺少断点恢复元数据，运行已安全降级为 failed');
+    }
+
+    // 图版本/prompt 版本变化都拒绝恢复，避免静默跑错。
+    const graphRec = this.repo.getGraphRecord(recovery.graphId, recovery.graphVersion);
+    if (
+      !graphRec ||
+      graphRec.digest !== recovery.graphDigest ||
+      (detail.graphDigest && detail.graphDigest !== recovery.graphDigest)
+    ) {
+      return error('E_RESUME_STALE_GRAPH', '图版本或图摘要已变化，拒绝从旧 checkpoint 恢复', {
+        expectedDigest: recovery.graphDigest,
+        actualDigest: graphRec?.digest,
+        graphId: recovery.graphId,
+        graphVersion: recovery.graphVersion
+      });
+    }
+    const prompt = detail.prompt ?? this.repo.getRunPromptSnapshot(runId);
+    if (!prompt || prompt.digest !== recovery.promptDigest || prompt.version !== recovery.promptVersion) {
+      return error('E_RESUME_STALE_PROMPT', 'run 绑定的 prompt 版本/摘要已变化，拒绝恢复', {
+        expectedDigest: recovery.promptDigest,
+        actualDigest: prompt?.digest,
+        expectedVersion: recovery.promptVersion,
+        actualVersion: prompt?.version
+      });
+    }
+
+    const inspected = inspectLatestCheckpoint(this.deps.db, runId);
+    if (!inspected.ok) {
+      this.repo.updateRunTerminal({
+        runId,
+        status: 'failed',
+        endedAt: this.now(),
+        errorCode: 'E_PROCESS_RESTART',
+        errorMessage: `checkpoint ${inspected.reason === 'missing' ? '缺失' : '损坏'}，已安全降级`
+      });
+      this.repo.deleteRunCheckpoints(runId);
+      this.persistScheduler.flushNow();
+      return error('E_PROCESS_RESTART', `checkpoint ${inspected.reason === 'missing' ? '缺失' : '损坏'}，运行已安全降级为 failed`);
+    }
+    // checkpoint 内嵌的 run 元数据也必须与 run 绑定一致，防止线程被换绑/篡改。
+    if (
+      (inspected.runMeta?.graphDigest && inspected.runMeta.graphDigest !== recovery.graphDigest) ||
+      (inspected.runMeta?.promptDigest && inspected.runMeta.promptDigest !== recovery.promptDigest)
+    ) {
+      return error('E_RESUME_STALE_GRAPH', 'checkpoint 内嵌的图/prompt 摘要与 run 绑定不一致，拒绝恢复');
+    }
+
+    const storedUsage = this.repo.getRunUsage(runId);
+    const usage: RunUsage =
+      storedUsage.calls > 0 || storedUsage.promptChars > 0
+        ? storedUsage
+        : { ...recovery.usage };
+    const attemptBases = this.repo.getNodeAttemptBases(runId);
+    const options: RunOptions = detail.config ?? { forceMock: recovery.isMock };
+    const provider = recovery.isMock ? this.deps.mockProvider : this.deps.provider;
+    const ctx: ActiveRun = {
+      canceled: false,
+      cancelReason: 'user',
+      finished: false,
+      execution: Promise.resolve()
+    };
+    const execution = this.buildExecution(
+      ctx,
+      runId,
+      graphRec.spec,
+      recovery.graphDigest,
+      detail.subject,
+      detail.asOf,
+      options,
+      provider,
+      recovery.isMock,
+      prompt,
+      {
+        usage,
+        attemptBases,
+        startSeq: this.repo.getMaxSeq(runId)
+      }
+    );
+
+    // 先改状态再驱动：并发/重复 resume 立即命中 E_RUN_TERMINAL。
+    this.repo.updateRunResumed(runId);
+    this.repo.clearRunRecovery(runId);
+    this.active.set(runId, ctx);
+    ctx.execution = this.drive(execution, { kind: 'resume_checkpoint' }).finally(() => {
+      ctx.finished = true;
+      if (this.active.get(runId) === ctx) this.active.delete(runId);
+    });
+    return ok({
+      runId,
+      status: 'running',
+      resumedAt: this.now(),
+      fromCheckpointId: inspected.checkpointId as string
+    });
   }
 
   async waitForRun(runId: string): Promise<void> {
@@ -676,9 +903,18 @@ export class AgentRuntime {
     asOf: string,
     options: RunOptions,
     provider: AiProvider,
-    isMock: boolean
+    isMock: boolean,
+    prompt: AgentPromptPackSnapshot,
+    extra: {
+      /** P7：续跑时从 DB 累加已消耗用量，预算不因重启重置。 */
+      usage?: RunUsage;
+      attemptBases?: Record<string, number>;
+      startSeq?: number;
+    } = {}
   ): Execution {
-    const usage: RunUsage = { calls: 0, promptChars: 0, completionChars: 0 };
+    const usage: RunUsage = extra.usage
+      ? { ...extra.usage }
+      : { calls: 0, promptChars: 0, completionChars: 0 };
     const execution = {
       runId,
       spec,
@@ -688,6 +924,7 @@ export class AgentRuntime {
       options,
       provider,
       isMock,
+      prompt,
       usage,
       startedAtMs: Date.now(),
       deadline: Date.now() + (options.timeoutMs ?? 600000),
@@ -696,6 +933,7 @@ export class AgentRuntime {
     } as unknown as Execution;
     execution.bus = new RunEventBus({
       runId,
+      startSeq: extra.startSeq,
       write: (envelope) => this.repo.writeEvent(envelope),
       send: this.deps.send,
       now: this.now
@@ -706,13 +944,35 @@ export class AgentRuntime {
       db: this.deps.db,
       generate: this.createGenerate(execution),
       checkCanceled,
-      asOf
+      asOf,
+      prompts: execution.prompt.prompts
     };
     execution.nodeDeps = nodeDeps;
 
+    // P7：thread_id 绑定 runId；节点完成/并行 writes 由 LangGraph 写入该 saver。
+    const checkpointSaver = new SqlJsCheckpointSaver(
+      this.deps.db,
+      {
+        persist: () => this.persistScheduler.flushNow(),
+        immediateFlush: this.immediateCheckpointFlush
+      },
+      {
+        graphId: spec.id,
+        graphVersion: spec.version,
+        graphDigest,
+        promptVersion: prompt.version,
+        promptDigest: prompt.digest,
+        threadId: runId
+      }
+    );
+    execution.checkpointSaver = checkpointSaver;
+    this.checkpointSavers.set(runId, checkpointSaver);
+
     const { graph } = compileAgentGraph(spec, nodeDeps, this.createHooks(execution), {
       nodeTimeoutMs: spec.settings.nodeTimeoutMs,
-      skipTimeout: isMock
+      skipTimeout: isMock,
+      checkpointer: checkpointSaver,
+      attemptBases: extra.attemptBases
     });
     execution.graph = graph;
     return execution;
@@ -745,6 +1005,7 @@ export class AgentRuntime {
       options: snap.options,
       provider,
       isMock: snap.isMock,
+      prompt: snap.prompt ?? DEFAULT_PROMPT_PACK,
       usage,
       startedAtMs: Date.now(),
       // 审批等待时长不计入超时预算，恢复后重新计时。
@@ -764,7 +1025,8 @@ export class AgentRuntime {
       db: this.deps.db,
       generate: this.createGenerate(execution),
       checkCanceled,
-      asOf: snap.asOf
+      asOf: snap.asOf,
+      prompts: execution.prompt.prompts
     };
 
     const finalNode =
@@ -916,6 +1178,8 @@ export class AgentRuntime {
           outputRef: `node:${runId}:${node.id}:${attempt}`,
           elapsedMs
         });
+        // P7：节点边界持久化用量，续跑时累加而不是从 0 开始。
+        this.repo.updateRunUsage(runId, execution.usage);
       },
       onNodeFailed: (node, err, elapsedMs, attempt) => {
         execution.lastStarted = null;
@@ -937,6 +1201,7 @@ export class AgentRuntime {
           message: info.message,
           retryable: false
         });
+        this.repo.updateRunUsage(runId, execution.usage);
       },
       onDebateTurn: (node, entry, count, maxRounds) => {
         execution.bus.emit({
@@ -966,8 +1231,8 @@ export class AgentRuntime {
           maxRounds
         });
       },
-      onRouteTaken: (from, to, condition) => {
-        execution.bus.emit({ type: 'route.taken', from, to, condition });
+      onRouteTaken: (from, to, condition, edgeId) => {
+        execution.bus.emit({ type: 'route.taken', from, to, condition, edgeId });
       }
     };
   }
@@ -980,6 +1245,7 @@ export class AgentRuntime {
       | { kind: 'start' }
       | { kind: 'resume'; resolution: ApprovalResolution }
       | { kind: 'restart_resume'; resolution: ApprovalResolution; state: Record<string, unknown> }
+      | { kind: 'resume_checkpoint' }
   ): Promise<void> {
     const { bus, runId, spec, subject, asOf, options, usage } = execution;
     if (input.kind === 'start') {
@@ -990,6 +1256,8 @@ export class AgentRuntime {
         subject,
         asOf
       });
+    } else if (input.kind === 'resume_checkpoint') {
+      bus.emit({ type: 'run.resumed', resolution: 'checkpoint' });
     } else {
       bus.emit({ type: 'run.resumed', resolution: input.resolution.type });
     }
@@ -1000,7 +1268,10 @@ export class AgentRuntime {
           ? ({ runId, asOf, subject } as never)
           : input.kind === 'restart_resume'
             ? (input.state as never)
-            : (new Command({ resume: input.resolution }) as never);
+            : input.kind === 'resume_checkpoint'
+              ? // P7：null 表示从最新 checkpoint 继续；已完成的节点与 pending writes 都从 saver 恢复。
+                (null as never)
+              : (new Command({ resume: input.resolution }) as never);
       const state = (await execution.graph.invoke(invocation, {
         configurable: { thread_id: runId },
         recursionLimit: computeRecursionLimit(spec)
@@ -1041,12 +1312,19 @@ export class AgentRuntime {
         usage
       });
       this.suspended.delete(runId);
+      // P7：终态后 checkpoint 不再需要，删除线程数据并立即落盘。
+      this.repo.deleteRunCheckpoints(runId);
+      this.persistScheduler.flushNow();
     } catch (err) {
       if (isGraphInterrupt(err)) {
         await this.handleInterrupted(execution);
         return;
       }
-      const info = extractAgentError(err);
+      // P7：checkpoint 反序列化失败时安全降级为 failed + E_PROCESS_RESTART，不崩溃。
+      const info =
+        err instanceof CheckpointCorruptError
+          ? { code: 'E_PROCESS_RESTART' as const, message: `checkpoint 损坏，已安全降级：${err.message}` }
+          : extractAgentError(err);
       if (execution.ctx.canceled || isCanceled(err)) {
         this.repo.updateRunTerminal({
           runId,
@@ -1067,6 +1345,8 @@ export class AgentRuntime {
         bus.emit({ type: 'run.failed', code: info.code, message: info.message });
       }
       this.suspended.delete(runId);
+      this.repo.deleteRunCheckpoints(runId);
+      this.persistScheduler.flushNow();
     }
   }
 
@@ -1111,6 +1391,7 @@ export class AgentRuntime {
       asOf: execution.asOf,
       options: execution.options,
       isMock: execution.isMock,
+      prompt: execution.prompt,
       state: values,
       approval,
       finalNodeId: approval.nodeId,
@@ -1131,6 +1412,10 @@ export class AgentRuntime {
       payload: approval as unknown as JsonObject
     });
     this.suspended.set(runId, execution);
+    // P7：审批挂起也必须把 checkpoint 与 pending writes 立刻落盘，
+    // 否则同进程 resume 依赖内存、跨进程只依赖 suspend_json，无法任意断点续跑。
+    execution.checkpointSaver?.forceFlush();
+    this.persistScheduler.flushNow();
   }
 
   /** P5：流式调用同样受总时长预算约束；超时后停止接收增量。 */

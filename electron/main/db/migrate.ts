@@ -203,6 +203,65 @@ const MIGRATION_14_ALTERS = [
   'ALTER TABLE agent_run ADD COLUMN suspend_json TEXT;'
 ];
 
+/** P6：角色 prompt 版本包（不可变）+ run 绑定 prompt 版本/摘要/快照。 */
+const MIGRATION_15_DDL = `
+CREATE TABLE IF NOT EXISTS agent_prompt_pack (
+  version INTEGER PRIMARY KEY AUTOINCREMENT,
+  digest TEXT NOT NULL,
+  prompts_json TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_prompt_pack_active ON agent_prompt_pack(is_active);
+`;
+
+const MIGRATION_15_ALTERS = [
+  'ALTER TABLE agent_run ADD COLUMN prompt_version INTEGER NOT NULL DEFAULT 0;',
+  'ALTER TABLE agent_run ADD COLUMN prompt_digest TEXT;',
+  'ALTER TABLE agent_run ADD COLUMN prompt_json TEXT;'
+];
+
+/** P7：LangGraph checkpoint 持久化（thread_id = runId）+ 断点续跑启动恢复元数据。
+ *  checkpoint/writes 的 value 都以 serde 的类型 + 文本保存；不存可执行代码。
+ *  用 checkpoint_id（uuid6）排序，字典序即时间序；writes 额外保存 task_path，
+ *  恢复时按 (task_path, task_id, idx) 还原并行节点的 pending writes。 */
+const MIGRATION_16_DDL = `
+CREATE TABLE IF NOT EXISTS agent_run_checkpoint (
+  run_id TEXT NOT NULL,
+  checkpoint_ns TEXT NOT NULL DEFAULT '',
+  checkpoint_id TEXT NOT NULL,
+  parent_checkpoint_id TEXT,
+  serde_type TEXT NOT NULL,
+  checkpoint_json TEXT NOT NULL,
+  metadata_type TEXT NOT NULL,
+  metadata_json TEXT NOT NULL,
+  run_meta_json TEXT NOT NULL DEFAULT '{}',
+  step INTEGER,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (run_id, checkpoint_ns, checkpoint_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_checkpoint_run ON agent_run_checkpoint(run_id, checkpoint_id);
+
+CREATE TABLE IF NOT EXISTS agent_run_checkpoint_write (
+  run_id TEXT NOT NULL,
+  checkpoint_ns TEXT NOT NULL DEFAULT '',
+  checkpoint_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  idx INTEGER NOT NULL,
+  channel TEXT NOT NULL,
+  serde_type TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  task_path TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, checkpoint_ns, checkpoint_id, task_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_checkpoint_write_task ON agent_run_checkpoint_write(run_id, checkpoint_id, task_id);
+`;
+
+const MIGRATION_16_ALTERS = [
+  'ALTER TABLE agent_run ADD COLUMN recovery_json TEXT;'
+];
+
 const MIGRATION_11 = `
 CREATE TABLE IF NOT EXISTS agent_graph (
   graph_id TEXT NOT NULL,
@@ -375,9 +434,17 @@ export function migrate(db: Database): void {
   if (existing < 12) db.exec(MIGRATION_12);
   if (existing < 13) for (const stmt of MIGRATION_13_ALTERS) safeAlter(db, stmt);
   if (existing < 14) for (const stmt of MIGRATION_14_ALTERS) safeAlter(db, stmt);
+  if (existing < 15) {
+    db.exec(MIGRATION_15_DDL);
+    for (const stmt of MIGRATION_15_ALTERS) safeAlter(db, stmt);
+  }
+  if (existing < 16) {
+    db.exec(MIGRATION_16_DDL);
+    for (const stmt of MIGRATION_16_ALTERS) safeAlter(db, stmt);
+  }
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '14');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '16');`
   );
 }
 

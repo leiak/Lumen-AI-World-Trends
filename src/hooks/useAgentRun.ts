@@ -4,6 +4,7 @@ import type {
   AgentGraphStatus,
   AgentIpcResponse,
   AgentRunDetail,
+  AgentRunRecovery,
   AgentRunStatus,
   AgentRunSummary,
   ApprovalContext,
@@ -16,6 +17,7 @@ import type {
   GraphSpec,
   JsonObject,
   MemoryInjection,
+  ResumeCheckpointResponse,
   ResumeRunResponse,
   RiskDebateState,
   RiskEntry,
@@ -50,8 +52,14 @@ export interface AgentRunViewState {
   debate: DebateState;
   risk: RiskDebateState;
   approval?: ApprovalContext;
+  /** P7：可断点续跑的元数据；与 approval 互斥。 */
+  recovery?: AgentRunRecovery;
   /** P3：本次运行注入的历史教训。 */
   memory?: { context: string; lessons: MemoryInjection[] };
+  /** P6：最近一次条件路由，edgeId 可定位到画布上的具体边。 */
+  lastRoute?: { from: string; to: string; condition: string; edgeId?: string };
+  /** P6：运行绑定的 prompt 版本快照。 */
+  prompt?: import('../../shared/agent').AgentPromptPackSnapshot;
   error?: string;
 }
 
@@ -139,6 +147,8 @@ function applyEvent(state: AgentRunViewState, env: RunEventEnvelope): AgentRunVi
   let debate = state.debate;
   let risk = state.risk;
   let approval = state.approval;
+  let recovery = state.recovery;
+  let lastRoute = state.lastRoute;
   let error = state.error;
 
   switch (event.type) {
@@ -241,6 +251,10 @@ function applyEvent(state: AgentRunViewState, env: RunEventEnvelope): AgentRunVi
     case 'run.resumed':
       status = 'running';
       approval = undefined;
+      recovery = undefined;
+      break;
+    case 'route.taken':
+      lastRoute = { from: event.from, to: event.to, condition: event.condition, edgeId: event.edgeId };
       break;
     case 'run.started':
       status = 'running';
@@ -261,6 +275,8 @@ function applyEvent(state: AgentRunViewState, env: RunEventEnvelope): AgentRunVi
     debate,
     risk,
     approval,
+    recovery,
+    lastRoute,
     error
   };
 }
@@ -306,12 +322,14 @@ function reducer(state: AgentRunViewState, action: Action): AgentRunViewState {
         debate: asDebate(detail.state?.debate) ?? emptyDebate(),
         risk: asRisk(detail.state?.risk) ?? emptyRisk(),
         approval: detail.approval,
+        recovery: detail.recovery,
         memory: detail.memory,
+        prompt: detail.prompt,
         error: detail.errorCode ? `${detail.errorCode}` : undefined
       };
     }
     case 'resumed':
-      return { ...state, status: 'running', approval: undefined, error: undefined };
+      return { ...state, status: 'running', approval: undefined, recovery: undefined, error: undefined };
     case 'notice':
       return { ...state, error: action.message };
     case 'error':
@@ -490,6 +508,21 @@ export function useAgentRun() {
     [refreshDetail, loadRuns]
   );
 
+  /** P7：从 checkpoint 继续运行（无审批挂起时使用）。 */
+  const resumeCheckpoint = useCallback(async () => {
+    if (!runIdRef.current) return undefined;
+    const res = await invokeAgent<ResumeCheckpointResponse>('agent:runs:resumeCheckpoint', {
+      runId: runIdRef.current
+    });
+    if (!res.ok) {
+      dispatch({ type: 'notice', message: `${res.code}: ${res.message}` });
+      return res;
+    }
+    dispatch({ type: 'resumed' });
+    void loadRuns();
+    return res;
+  }, [loadRuns]);
+
   const selectRun = useCallback(
     async (runId: string) => {
       runIdRef.current = runId;
@@ -522,6 +555,7 @@ export function useAgentRun() {
     start,
     cancel,
     resume,
+    resumeCheckpoint,
     selectRun,
     refreshGraph,
     applySavedGraph,

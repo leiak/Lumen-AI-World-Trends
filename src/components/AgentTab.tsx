@@ -15,6 +15,7 @@ import {
 } from '../../shared/agent';
 import AgentFlowCanvas from './agent/AgentFlowCanvas';
 import GraphEditorPanel from './agent/GraphEditorPanel';
+import PromptEditorPanel from './agent/PromptEditorPanel';
 
 type InvokeResult = {
   ok?: boolean;
@@ -45,6 +46,7 @@ export default function AgentTab() {
     start,
     cancel,
     resume,
+    resumeCheckpoint,
     selectRun,
     refreshGraph,
     applySavedGraph
@@ -55,15 +57,27 @@ export default function AgentTab() {
   const [subject, setSubject] = useState('China');
   const [forceMock, setForceMock] = useState(false);
   const [selectedId, setSelectedId] = useState<string>('judge');
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string>();
+  const [showPrompts, setShowPrompts] = useState(false);
   const [editRating, setEditRating] = useState<TrendRating>('up');
   const [editThesis, setEditThesis] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [memory, setMemory] = useState<MemoryListResponse>();
   const [settling, setSettling] = useState(false);
   const [settleNote, setSettleNote] = useState('');
+  const [resumingCheckpoint, setResumingCheckpoint] = useState(false);
 
   const active = state.status === 'running' || state.status === 'queued';
   const interrupted = state.status === 'interrupted';
+
+  const onResumeCheckpoint = useCallback(async () => {
+    setResumingCheckpoint(true);
+    try {
+      await resumeCheckpoint();
+    } finally {
+      setResumingCheckpoint(false);
+    }
+  }, [resumeCheckpoint]);
 
   const loadMemory = useCallback(async () => {
     const res = (await window.lumen.invoke('agent:memory:list')) as InvokeResult | undefined;
@@ -226,6 +240,14 @@ export default function AgentTab() {
     return out;
   }, [editor.state.issues]);
 
+  const edgeErrors = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const issue of editor.state.issues) {
+      if (issue.edgeId && !out[issue.edgeId]) out[issue.edgeId] = issue.message;
+    }
+    return out;
+  }, [editor.state.issues]);
+
   const canvasSpec = editing ? editor.state.draft : state.runId && viewGraph ? viewGraph.spec : graph;
   const canvasNodes = editing ? {} : state.nodes;
 
@@ -270,7 +292,16 @@ export default function AgentTab() {
           >
             {editing ? t('agent.editor.exit') : t('agent.editor.edit')}
           </button>
-          <span className={`agent-run-status status-${state.status}`} data-testid="agent-run-state" data-status={state.status}>{t(statusKey(state.status))}</span>
+          <button
+            className={`btn${showPrompts ? ' primary' : ''}`}
+            data-testid="agent-prompt-toggle"
+            onClick={() => setShowPrompts((v) => !v)}
+          >
+            {showPrompts ? t('agent.prompt.close') : t('agent.prompt.open')}
+          </button>
+          <span className={`agent-run-status status-${state.status}`} data-testid="agent-run-state" data-status={state.status}>
+            {interrupted && state.recovery ? t('agent.status.recoverable') : t(statusKey(state.status))}
+          </span>
           {graphMeta ? (
             <span className="muted">{t('agent.editor.version', { version: graphMeta.version })}</span>
           ) : null}
@@ -280,6 +311,40 @@ export default function AgentTab() {
         {state.runId ? <p className="muted agent-run-id" data-testid="agent-run-id">{state.runId}</p> : null}
         {state.error ? <p className="agent-error" data-testid="agent-error">{t('agent.error', { msg: state.error })}</p> : null}
       </div>
+
+      {interrupted && state.recovery ? (
+        <div
+          className="card agent-recovery-card"
+          data-testid="agent-recovery"
+          data-checkpoint-id={state.recovery.checkpointId}
+          data-checkpoint-step={state.recovery.checkpointStep}
+          data-checkpoint-usage={state.recovery.usage.calls}
+        >
+          <div className="agent-debate-head">
+            <h3>{t('agent.recovery.title')}</h3>
+            <span className="agent-review-flag">{t('agent.recovery.waiting')}</span>
+          </div>
+          <p className="muted">
+            {t('agent.recovery.hint', {
+              step: state.recovery.checkpointStep,
+              calls: state.recovery.usage.calls
+            })}
+          </p>
+          <div className="agent-approval-actions">
+            <button
+              className="btn primary"
+              data-testid="agent-recovery-resume"
+              onClick={() => void onResumeCheckpoint()}
+              disabled={resumingCheckpoint}
+            >
+              {t('agent.recovery.resume')}
+            </button>
+            <button className="btn" data-testid="agent-recovery-cancel" onClick={() => void cancel()}>
+              {t('agent.approval.reject')}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {interrupted && state.approval ? (
         <div className="card agent-approval-card" data-testid="agent-approval">
@@ -395,7 +460,17 @@ export default function AgentTab() {
             spec={canvasSpec}
             nodes={canvasNodes}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setSelectedEdgeId(undefined);
+            }}
+            selectedEdgeId={selectedEdgeId}
+            onSelectEdge={(id) => {
+              setSelectedEdgeId(id);
+              setSelectedId('');
+            }}
+            edgeErrors={editing ? edgeErrors : undefined}
+            routeEdgeId={state.lastRoute?.edgeId}
             editable={editing && !active && !interrupted}
             nodeErrors={editing ? nodeErrors : undefined}
             onNodePosition={(id, x, y) => editor.position(id, x, y)}
@@ -422,8 +497,19 @@ export default function AgentTab() {
               error={editor.state.error}
               savedAt={editor.state.savedAt}
               selectedNodeId={selectedId}
+              selectedEdgeId={selectedEdgeId}
               nodeErrors={nodeErrors}
-              onSelectNode={setSelectedId}
+              onSelectNode={(id) => {
+                setSelectedId(id);
+                setSelectedEdgeId(undefined);
+              }}
+              onSelectEdge={(id) => {
+                setSelectedEdgeId(id);
+                setSelectedId('');
+              }}
+              onEdgeCondition={editor.setEdgeCondition}
+              onEdgeTarget={editor.setEdgeTarget}
+              onEdgeWhenDone={editor.setEdgeWhenDone}
               onLabel={editor.label}
               onJoinMode={editor.joinMode}
               onConfig={editor.config}
@@ -458,6 +544,8 @@ export default function AgentTab() {
           )}
         </div>
       </div>
+
+      {showPrompts ? <PromptEditorPanel onClose={() => setShowPrompts(false)} /> : null}
 
       <div className="card agent-debate-card">
         <div className="agent-debate-head">
@@ -588,7 +676,25 @@ export default function AgentTab() {
               {state.reviewRequired ? (
                 <span className="agent-review-flag">{t('agent.decision.review')}</span>
               ) : null}
+              {state.prompt ? (
+                <span className="muted" data-testid="agent-run-prompt-version" data-version={state.prompt.version}>
+                  {t('agent.prompt.runVersion', { version: state.prompt.version })}
+                  {' · '}
+                  {state.prompt.digest.slice(0, 10)}
+                </span>
+              ) : null}
             </div>
+            {state.lastRoute ? (
+              <p className="muted" data-testid="agent-route-taken" data-edge-id={state.lastRoute.edgeId ?? ''}>
+                {t('agent.prompt.routeTaken', {
+                  from: state.lastRoute.from,
+                  to: state.lastRoute.to,
+                  edge: state.lastRoute.edgeId ?? '—'
+                })}
+                {' · '}
+                {state.lastRoute.condition}
+              </p>
+            ) : null}
             {state.decision ? (
               <div className="agent-decision-body">
                 <div>
@@ -764,6 +870,11 @@ export default function AgentTab() {
                     <span className="muted">—</span>
                   )}
                   <span className="muted">v{run.graphVersion}</span>
+                  {run.promptVersion !== undefined ? (
+                    <span className="muted" data-testid="agent-run-prompt-version" data-version={run.promptVersion}>
+                      pv{run.promptVersion}
+                    </span>
+                  ) : null}
                   {run.graphDigest ? <span className="muted">{run.graphDigest.slice(0, 8)}</span> : null}
                   <span className="muted">{run.startedAt.slice(0, 19).replace('T', ' ')}</span>
                 </button>

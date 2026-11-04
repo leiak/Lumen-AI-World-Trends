@@ -22,6 +22,10 @@ export type AgentErrorCode =
   | 'E_PROCESS_RESTART'
   /** P5：重启后恢复审批挂起时，图上已持久化的 spec 摘要与快照不一致。 */
   | 'E_RESUME_STALE_GRAPH'
+  /** P7：断点续跑时 run 绑定的 prompt 快照缺失/被篡改，无法安全恢复。 */
+  | 'E_RESUME_STALE_PROMPT'
+  /** P7：run 处于 interrupted 但没有可用的 checkpoint（例如等待审批的 run）。 */
+  | 'E_RESUME_NO_CHECKPOINT'
   | 'E_INTERNAL';
 
 export type AgentIpcResponse<T> =
@@ -33,6 +37,76 @@ export interface AgentSubject {
   key: string;
   label: string;
   kind: 'topic' | 'country' | 'event';
+}
+
+// —— P6：角色 prompt 编辑 ——
+
+/** 可编辑 system prompt 的角色（memory 不调用模型，不在其中）。 */
+export const AGENT_PROMPT_ROLES = [
+  'evidence',
+  'bull',
+  'bear',
+  'judge',
+  'planner',
+  'risk_aggressive',
+  'risk_conservative',
+  'risk_neutral',
+  'final'
+] as const;
+
+export type AgentPromptRole = (typeof AGENT_PROMPT_ROLES)[number];
+
+/** 单角色 system prompt 文本上限。 */
+export const PROMPT_MAX_SYSTEM_CHARS = 800;
+/** 渲染变量后的 system prompt 上限（超长会被硬截断）。 */
+export const PROMPT_MAX_RENDERED_CHARS = 1200;
+/** 唯一允许的占位符；只做一次字符串替换，不做模板求值。 */
+export const PROMPT_PLACEHOLDERS = [
+  '{{subject.key}}',
+  '{{subject.label}}',
+  '{{asOf}}',
+  '{{round}}',
+  '{{memory.lessons}}',
+  '{{evidence.summary}}'
+] as const;
+
+export interface AgentPromptIssue {
+  code: AgentErrorCode;
+  message: string;
+  role: AgentPromptRole;
+  /** 出错位置（0-based 字符偏移），用于 UI 定位。 */
+  offset?: number;
+}
+
+/** 一次运行绑定的 prompt 版本快照；version 0 = 内置默认。 */
+export interface AgentPromptPackSnapshot {
+  version: number;
+  digest: string;
+  /** 仅保存覆盖默认值的角色；缺省角色使用内置模板。 */
+  prompts: Partial<Record<AgentPromptRole, string>>;
+}
+
+export interface AgentPromptPackView extends AgentPromptPackSnapshot {
+  createdAt: string;
+  updatedAt: string;
+  /** true 表示没有覆盖，全部使用内置模板。 */
+  isDefault: boolean;
+  defaults: Record<AgentPromptRole, string>;
+  limits: { maxSystemChars: number; maxRenderedChars: number };
+  placeholders: readonly string[];
+}
+
+export interface AgentPromptsGetResponse {
+  pack: AgentPromptPackView;
+}
+
+export interface AgentPromptsSaveRequest {
+  /** 提交所有角色的编辑值；与默认模板相同的项会被归一化为“未覆盖”。 */
+  prompts: Partial<Record<AgentPromptRole, string>>;
+}
+
+export interface AgentPromptsSaveResponse {
+  pack: AgentPromptPackView;
 }
 
 export interface RunOptions {
@@ -101,6 +175,36 @@ export interface ResumeRunResponse {
   /** reject 会直接进入 canceled；其余先返回 running，随后由事件推进。 */
   status: 'running' | 'completed' | 'failed' | 'canceled';
   resumedAt: string;
+}
+
+/** P7：任意断点续跑（不涉及人工审批）。 */
+export interface ResumeCheckpointRequest {
+  runId: string;
+}
+
+export interface ResumeCheckpointResponse {
+  runId: string;
+  status: 'running';
+  resumedAt: string;
+  /** 本次恢复起点的已持久化 checkpoint。 */
+  fromCheckpointId: string;
+}
+
+/** P7：启动恢复元数据；只有完整时才把残留 running run 标为可续跑。 */
+export interface AgentRunRecovery {
+  v: 1;
+  kind: 'checkpoint';
+  checkpointId: string;
+  checkpointStep: number;
+  graphId: string;
+  graphVersion: number;
+  graphDigest: string;
+  promptVersion: number;
+  promptDigest: string;
+  threadId: string;
+  isMock: boolean;
+  usage: RunUsage;
+  recoveredAt: string;
 }
 
 /** 挂起在 final 节点前的审批上下文，供 UI 展示与人工决策。 */
@@ -424,6 +528,19 @@ export interface GraphEdgeSpec {
   condition?: BuiltinCondition;
 }
 
+/** 人类可读的条件路由标签；无条件边返回 null。 */
+export function edgeRouteLabel(edge: GraphEdgeSpec): string | null {
+  const cond = edge.condition;
+  if (!cond || cond.kind === 'always') return null;
+  if (cond.kind === 'debate_rounds') {
+    return `辩论：第 ${cond.maxRounds} 轮后 → ${cond.whenDone}，否则 → ${edge.target}`;
+  }
+  if (cond.kind === 'risk_rounds') {
+    return `风控：第 ${cond.maxRounds} 轮后 → ${cond.whenDone}，否则按顺序 → ${edge.target}`;
+  }
+  return null;
+}
+
 export interface RunSettings {
   maxDebateRounds: number;
   maxRiskRounds: number;
@@ -527,7 +644,7 @@ export type RunEvent =
       subject: AgentSubject;
       asOf: string;
     }
-  | { type: 'run.resumed'; resolution: 'approve' | 'edit' | 'reject' }
+  | { type: 'run.resumed'; resolution: 'approve' | 'edit' | 'reject' | 'checkpoint' }
   | { type: 'node.started'; nodeId: string; nodeType: AgentNodeType; attempt: number }
   | { type: 'node.progress'; nodeId: string; percent?: number; message?: string }
   | { type: 'node.token'; nodeId: string; delta: string; attempt?: number; reset?: boolean }
@@ -571,7 +688,8 @@ export type RunEvent =
       count: number;
       maxRounds: number;
     }
-  | { type: 'route.taken'; from: string; to: string; condition: string }
+  /** condition 是人类可读标签；edgeId 用于把路由定位到具体边。 */
+  | { type: 'route.taken'; from: string; to: string; condition: string; edgeId?: string }
   | {
       type: 'run.interrupted';
       nodeId: string;
@@ -609,6 +727,9 @@ export interface AgentRunSummary {
   graphVersion: number;
   /** P4：运行绑定的 spec 摘要；旧 run 可能为空。 */
   graphDigest?: string;
+  /** P6：运行绑定的 prompt 版本与摘要；旧 run 为 0/空。 */
+  promptVersion?: number;
+  promptDigest?: string;
   status: AgentRunStatus;
   subject: AgentSubject;
   asOf: string;
@@ -640,12 +761,16 @@ export interface AgentRunDetail extends AgentRunSummary {
   state?: JsonObject;
   nodes: AgentNodeResultView[];
   decision?: FinalDecision;
-  /** 处于 interrupted 时，挂起审批的上下文。 */
+  /** 处于 interrupted 时，挂起审批的上下文；仅审批挂起才存在。 */
   approval?: ApprovalContext;
+  /** P7：从 checkpoint 恢复的元数据；仅“等待手动续跑”的 interrupted 才存在。 */
+  recovery?: AgentRunRecovery;
   /** P3：本次运行注入的历史教训。 */
   memory?: { context: string; lessons: MemoryInjection[] };
   /** P4：运行当时使用的图名称（从对应版本快照读取，不随当前 active 图变化）。 */
   graphName?: string;
+  /** P6：运行当时使用的 prompt 快照，历史回放不随后续编辑变化。 */
+  prompt?: AgentPromptPackSnapshot;
 }
 
 export interface AgentRunsListRequest {

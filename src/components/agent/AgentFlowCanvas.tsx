@@ -99,6 +99,12 @@ export interface AgentFlowCanvasProps {
   onDeleteEdges?: (edgeIds: string[]) => void;
   /** P5：节点实时增量文本。 */
   streams?: Record<string, string>;
+  /** P6：边选择/条件边编辑与非法边高亮。 */
+  selectedEdgeId?: string;
+  onSelectEdge?: (edgeId: string) => void;
+  edgeErrors?: Record<string, string>;
+  /** 最近一次 route.taken 的 edgeId，用于在画布上定位。 */
+  routeEdgeId?: string;
 }
 
 export default function AgentFlowCanvas({
@@ -112,7 +118,11 @@ export default function AgentFlowCanvas({
   onConnectEdge,
   onDeleteNodes,
   onDeleteEdges,
-  streams
+  streams,
+  selectedEdgeId,
+  onSelectEdge,
+  edgeErrors,
+  routeEdgeId
 }: AgentFlowCanvasProps) {
   const { t } = useI18n();
   const flowNodes = useMemo<Node[]>(() => {
@@ -182,14 +192,24 @@ export default function AgentFlowCanvas({
       .filter((e) => ids.has(e.source) && ids.has(e.target))
       .flatMap((e) => {
         const animated = nodes[e.source]?.status === 'running';
+        const error = edgeErrors?.[e.id];
+        const selected = selectedEdgeId === e.id;
+        const routed = routeEdgeId === e.id;
+        const stroke = error ? '#e05a5a' : selected ? '#ffb84d' : routed ? '#4ad991' : '#3b4453';
         const base: Edge = {
           id: e.id,
           source: e.source,
           target: e.target,
           type: 'smoothstep',
           animated,
-          style: { stroke: '#3b4453' }
+          style: { stroke, strokeWidth: error || selected || routed ? 2.5 : 1.5 },
+          data: { testid: `agent-edge-${e.id}` }
         };
+        if (error) {
+          base.label = error;
+          base.labelStyle = { fill: '#ff9a9a', fontSize: 11 };
+          base.labelBgStyle = { fill: '#2a1a1a' };
+        }
         if (!e.condition || e.condition.kind === 'always') return [base];
         const isRisk = e.condition.kind === 'risk_rounds';
         const label = t(isRisk ? 'agent.risk.edge' : 'agent.debate.edge', {
@@ -197,21 +217,21 @@ export default function AgentFlowCanvas({
         });
         const exitId = `${e.id}-done`;
         return [
-          { ...base, label, labelStyle, labelBgStyle: { fill: '#171b21' } },
+          { ...base, label: error ?? label, labelStyle: error ? base.labelStyle : labelStyle, labelBgStyle: { fill: error ? '#2a1a1a' : '#171b21' } },
           {
             id: exitId,
             source: e.source,
             target: e.condition.whenDone,
             type: 'smoothstep',
             animated: false,
-            style: { stroke: '#6b4a2f', strokeDasharray: '5 4' },
+            style: { stroke: error ? '#7a3a3a' : '#6b4a2f', strokeDasharray: '5 4' },
             label: t(isRisk ? 'agent.risk.exit' : 'agent.debate.exit'),
             labelStyle,
             labelBgStyle: { fill: '#171b21' }
           }
         ];
       });
-  }, [spec, nodes, editable, t]);
+  }, [spec, nodes, editable, t, selectedEdgeId, edgeErrors, routeEdgeId]);
 
   if (!spec) {
     return <div className="agent-flow-empty">…</div>;
@@ -225,6 +245,9 @@ export default function AgentFlowCanvas({
         nodeTypes={NODE_TYPES}
         onNodeClick={(_event, node) => {
           if (node.id !== '__start__' && node.id !== '__end__') onSelect(node.id);
+        }}
+        onEdgeClick={(_event, edge) => {
+          onSelectEdge?.(edge.id.replace(/-done$/, ''));
         }}
         onNodeDragStop={(_event, node) => onNodePosition?.(node.id, node.position.x, node.position.y)}
         onConnect={(connection: Connection) => {
