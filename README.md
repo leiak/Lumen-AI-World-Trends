@@ -14,10 +14,11 @@
 - **事件图谱**：实体抽取（词典 gazetteer）→ 共现关系 → 共享实体聚类成事件，落库为 entity / event / edge。
 - **趋势引擎**：按时间桶计算话题热度序列、动量（涨/跌）、世界热点（国家维度）。
 - **AI 因果解读**：对最热话题生成中文因果解读；provider 可插拔（火山方舟 ARK / Mock）。
+- **多智能体趋势判断**（智能体 Tab）：取证 → 多空 N 轮辩论 → 裁决 → 三方风控 → 观察方案 → 人工审批 → 记忆结算；节点级事件流（`node.started` / `node.token` / `node.completed` 等）、四态流程图、条件边与角色 prompt 可编辑、sql.js checkpoint 断点续跑；无 Key 时自动走离线 Mock，配置 `ARK_API_KEY` 即切真实模型。
 - **因果链**：输入任意实体，把其相关事件按时间串成链路（共享实体作锚点），可选 AI 逐段补因果断言 + 整体摘要。
 - **全局叙事**：把跨实体的因果链按共享事件自动合并成更大的叙事（如“制裁 China → 油价 Oil → 通胀 US”），从局部链到世界叙事一张图；支持一键 **AI 整体摘要** 与 **反事实推演**（“如果首个事件没有发生会怎样”）。
 - **解读中心体验**：AI 解读 / 因果链双栏布局；新手三步引导（采集→建图→生成）；一键导出 Markdown/JSON 快照。
-- **桌面看板**：7 个 Tab（总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索）。
+- **桌面看板**：9 个 Tab（总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 股票 / 检索 / 智能体）。
 - **总览数据**：文章/实体/事件/关系边/今日新增指标卡 + 今日热点 + 调度状态（`dashboard:today`）。
 - **AI 解读中心**：因果解读 + 周报生成 + 实体因果链，历史本地缓存。
 - **时间线回放**：把聚类出的事件按时间倒序组织成可回看的时间线，附其关联文章。
@@ -36,7 +37,7 @@
 
 ## 截图一览
 
-下面 8 张截图按 7 个 Tab 的顺序展示 Lumen 看板的真实使用效果。
+下面 12 张截图按 9 个 Tab 的顺序展示 Lumen 看板的真实使用效果。
 
 ### 总览 Tab — 指标卡 + 引擎状态 + 采集策略
 
@@ -90,6 +91,24 @@ Choropleth 热力地图按国家（或大洲）热度着色，左上「国家 / 
 
 跨中英文关键词检索已抓文章，结果全部来自本地 SQLite（`sql.js`），离线可用；空结果时会提示「先搜一搜，或到「总览」采集文章」。
 
+### 智能体 Tab — 多智能体趋势判断
+
+![智能体 Tab — 运行流程](images/agent-graph.png)
+
+空闲态的真实默认图（v4）：memory → evidence → bull ⇄ bear（计数终止）→ judge → planner → 三方风控（aggressive / conservative / neutral 串行轮转）→ final。节点四态（未开始 / 进行中 / 已完成 / 失败）由事件流 `node.started` / `node.completed` / `node.failed` 驱动。
+
+![智能体 Tab — 辩论历史](images/agent-debate.png)
+
+辩论历史按轮次递增展示多头 / 空头发言（含置信度与**该节点尝试的开始时间**，跨天自动补日期）；运行中与历史回放都能看到时间。
+
+![智能体 Tab — 三方风控与结论](images/agent-risk.png)
+
+三方风控依次挑战结论（同样带发言时间），下方是结构化结论（评级 / 置信度 / 论点 / 主要风险 / 下次复核）。
+
+![智能体 Tab — 人工审批](images/agent-approval.png)
+
+结论落地前挂起等待人工审批：展示裁决建议（评级 / 置信度）、批准 / 应用修改 / 拒绝三种出口，修改会覆盖评级与理由，拒绝会取消本次运行。
+
 ## 架构
 
 ```
@@ -101,11 +120,13 @@ Choropleth 热力地图按国家（或大洲）热度着色，左上「国家 / 
   ├─ 股票 stocks (行情抓取 / 解析 / K线)
   ├─ 因果 causal (规则链构建 + 跨链合并 + AI 断言)
    ├─ 导出 export (快照 Markdown/JSON)
+   ├─ 智能体 agent (图编译 / 运行 / 审批 / checkpoint / 记忆结算)
    └─ AI ai (ARK / Mock 可插拔 provider)
 数据层: SQLite (sql.js)  →  %APPDATA%\lumen-world-trends\lumen.db
 ```
 
 单向流水线：`采集 → 标准化去重 → 图谱入库 → 趋势 → 因果链/全局叙事 + AI 解读 → IPC → 展示`
+智能体旁路：`本地文章/热点 → 取证 → 辩论 → 裁决 → 风控 → 观察方案 → 人工审批 → 结论 + 记忆结算`
 
 ## 技术栈
 
@@ -116,8 +137,9 @@ Choropleth 热力地图按国家（或大洲）热度着色，左上「国家 / 
 | 图表 | ECharts |
 | 采集 | axios / cheerio / rss-parser |
 | 存储 | sql.js（SQLite WASM，零原生编译） |
-| 测试 | vitest（全夹具，不发真实网络） |
+| 测试 | vitest（全夹具，不发真实网络）+ Playwright（Electron E2E） |
 | AI | OpenAI 兼容（火山方舟 ARK / Mock） |
+| 智能体 | @langchain/langgraph（StateGraph / interrupt）+ sql.js checkpoint |
 
 ## 环境要求
 
@@ -170,6 +192,70 @@ npm test
   - **因果链**：输入实体名（如 China / 关税）生成事件链，可开/关 AI 断言，历史可回看（`causality:generate` / `causality:list` / `causality:chain`）
   - **三步引导**：无数据时顶部出现新手指引，可直接「去采集 / 去建图」
   - **导出快照**：一键导出 Markdown/JSON 快照（趋势 + 解读 + 因果链 + 全局叙事，系统保存对话框）（`export:snapshot`）
+- **智能体**：多智能体趋势判断（`agent:*`）
+  - 选择分析对象 → 「开始分析」跑取证 → 辩论 → 裁决 → 风控 → 观察方案；`final` 前弹出人工审批（批准 / 应用修改 / 拒绝）
+  - 运行流程图为节点四态（未开始 / 进行中 / 已完成 / 失败），点节点看输出与耗时；辩论/风控发言逐条显示时间
+  - 「编辑图 / 编辑 prompt」可改节点参数、条件边与角色 system prompt；有未保存改动时不允许开跑
+  - 进程中断或审批挂起后可「继续运行」；「记忆与结算」展示历史教训与命中率，可手动结算到期记录
+
+## 多智能体趋势分析（智能体 Tab）
+
+### 它做了什么
+
+一次 run 把「本地数据 → 可审计结论」拆成多个智能体节点，所有阶段都通过事件流（`run.started` / `node.*` / `debate.turn` / `risk.turn` / `route.taken` / `run.interrupted` / `run.completed`）实时推给渲染层：
+
+| 阶段 | 节点 | 产出 |
+|---|---|---|
+| 记忆注入 | `memory` | 只注入 `asOf` 之前已结算的历史教训（`agent.memory.hint`） |
+| 取证 | `evidence` | 从本地文章/热点聚合热度、情绪、地缘、结构四个维度的信号与数据缺口 |
+| 多空辩论 | `bull` ⇄ `bear` | 交替发言，按 `settings.maxDebateRounds` 计数终止；judge 拿到完整历史 |
+| 裁决 | `judge` | `FinalDecision`（评级 / 置信度 / 论点 / 主要风险 / 下次复核） |
+| 三方风控 | `risk_aggressive` → `risk_conservative` → `risk_neutral` | 三方依次挑战结论并给缓解措施与剩余风险 |
+| 观察方案 | `planner` | `ObservationPlan`（watch / alert / escalate / dismiss + 触发条件） |
+| 人工审批 | `final` | 挂起等待批准 / 修改 / 拒绝，批准后才生成终态结论 |
+| 记忆结算 | `agent:memory:settle` | 到期记录按真实行情/热度结算成 hit / miss / inconclusive，数据不足标 `insufficient` |
+
+辩论与风控的每条发言都会显示**该节点那次尝试的开始时间**（`HH:MM:SS`，跨天自动补 `MM-DD`）；运行中由 `debate.turn` / `risk.turn` 事件携带，历史回放由 `agent_node_result.started_at` 补齐，两边同源，不额外存列。
+
+### 图编辑与 prompt 编辑的边界
+
+- **能改**：节点 `label`、节点参数（`topN` / `windowDays` / `lookbackDays` / `maxLessons` / `maxRounds` / `maxTriggers` / `dimension`）、条件边（新增 / 删除 / 改条件与目标）、角色 system prompt（取证 / 多头 / 空头 / 裁决 / 风控 / 观察方案 / 终审）。
+- **不能改**：节点集合本身（memory 最多 1 个、bull/bear/judge/final 各恰好 1 个、风控三节点必须齐全、启用风控时必须保留 planner），以及不允许自环、重复边、悬空边、非法轮次流转。
+- **护栏**：
+  - 保存时服务端 `validateGraphSpec` 全量校验，失败返回 `E_VALIDATION` / `E_GRAPH_INVALID` 并把问题定位到具体 `nodeId` / `edgeId`。
+  - 运行绑定 `graphVersion + graphDigest`；编辑器有未保存改动时渲染层直接拦截开跑，避免「跑旧图」。
+  - prompt 只能改 system 文本：占位符白名单 `{{subject.key}}` / `{{subject.label}}` / `{{asOf}}` / `{{round}}` / `{{memory.lessons}}` / `{{evidence.summary}}`（字符串替换，不做模板求值），单角色上限 800 字符，渲染后超过 1200 字符硬截断。
+
+### 断点续跑与审批恢复
+
+两种中断都能恢复，但**都必须手动点「继续运行」**，不会自动重启：
+
+- **审批挂起**：`final` 节点 `interrupt()` 前把最小状态写进 `agent_run.suspend_json`；进程重启后仍可 `agent:runs:resume` 续跑，已完成节点不重跑。
+- **进程中断**：运行中 checkpoint 写入 `agent_run_checkpoint` / `agent_run_checkpoint_write`（sql.js 表，节流批量 export）；重启后 `agent:runs:resumeCheckpoint` 从 checkpoint 继续。
+- **恢复条件**：图 `digest` 与 prompt 版本必须与运行时一致，否则 `E_RESUME_STALE_GRAPH` / `E_RESUME_STALE_PROMPT`；checkpoint 缺失或损坏返回 `E_RESUME_NO_CHECKPOINT` / `E_PROCESS_RESTART`，并把 run 降级为 `failed`，不会崩溃。
+- 终态（completed / failed / canceled）会**删除 checkpoint**，所以不能再事后恢复调试。
+
+### Mock 与真实 ARK
+
+```powershell
+# 默认：未设置 ARK_API_KEY → MockProvider（离线、规则化 JSON，全链路可跑）
+npm run dev
+
+# 真实 ARK
+$env:ARK_API_KEY = "<你的 ARK API Key>"
+$env:ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"  # 可选
+$env:ARK_MODEL = "ep-xxxxxxxx | doubao-seed-1-6-250615"        # 可选
+npm run dev
+```
+
+- UI 上勾选「强制离线 Mock」可让本次 run 无视 Key 走 Mock（`forceMock`），适合演示与排障。
+- 其他相关环境变量：`LUMEN_MOCK_DELAY_MS`（Mock 每步延迟，上限 2000ms，仅测试用）、`LUMEN_PERSIST_INTERVAL_MS`（sql.js 批量落盘间隔）、`LUMEN_CHECKPOINT_FLUSH=immediate`（checkpoint 立即写，默认节流）。
+
+### 数据与本地存储
+
+- 单文件 SQLite（`sql.js` WASM，无原生编译）：`%APPDATA%\lumen-world-trends\lumen.db`，整库 export 落盘。
+- schema 版本 **16**（`meta.schema_version`），本能力相关表：`agent_graph` / `agent_prompt_pack` / `agent_run` / `agent_run_event` / `agent_node_result` / `agent_decision` / `agent_memory` / `agent_run_checkpoint` / `agent_run_checkpoint_write`。
+- 事件先落库再推送（`agent_run_event` 按 `seq` 单调递增），`agent:runs:events` 支持 `afterSeq` 增量补拉，断线/重启后可无缝续看。
 
 ## 启用真实 AI（火山方舟 ARK）
 
@@ -203,6 +289,8 @@ npm run dev
 | `npm run build:main` | 仅构建 electron 主进程 |
 | `npm test` | 运行全部 vitest 测试（夹具，不发网络） |
 | `npx tsc -p tsconfig.json --noEmit` | 类型检查 |
+| `npm run e2e` | 构建后用 Playwright 驱动 Electron 真实点击跑 6 个智能体场景（导航/重启回看/编辑器校验/拦截旧图/跨进程恢复/流式 token） |
+| `$env:LUMEN_SMOKE=1; npx electron .` | 冒烟自检：加载后打印引擎状态并退出，成功输出 `LUMEN_SMOKE_OK` |
 | `npm run capture:shots` | 一键捕获 8 个 Tab 的 PNG 到 `images/`（截图工具脚本，详见下方「开发工具：截图捕获」） |
 
 开发辅助环境变量（非必须）：
@@ -213,6 +301,9 @@ npm run dev
 - `LUMEN_DEBUG=1`：打印渲染层 DOM/console 便于排查白屏
 - `LUMEN_CAPTURE=1`：配合 `capture:shots` 启用截图模式（脚本已自动设，**一般不用手设**）
 - `LUMEN_CAPTURE_DIR`：自定义截图输出目录（默认 `images/`）
+- `LUMEN_CHECKPOINT_FLUSH=immediate`：智能体 checkpoint 每次写入立即落盘（默认节流，测试/排障用）
+- `LUMEN_PERSIST_INTERVAL_MS`：sql.js 批量持久化间隔（毫秒）
+- `LUMEN_MOCK_DELAY_MS`：MockProvider 每步延迟（毫秒，上限 2000，仅测试用）
 
 ## 开发工具：截图捕获
 
@@ -225,7 +316,7 @@ npm run capture:shots
 - **做什么**：先 `npm run build`，再以 `LUMEN_CAPTURE=1` 启动 Electron；窗口加载完成后，主进程自动遍历 8 个 nav-btn → `executeJavaScript` 切 Tab → 等 2600ms 让图表/地图渲染 → `webContents.capturePage()` 截图 → 写 `<tab>.png`，完成后自动 `app.quit()`。
 - **输出目录**：默认 `images/`（仓库根）；可设 `LUMEN_CAPTURE_DIR` 改路径，目录会自动 `mkdir -p`。
 - **顺序**：固定为 `dashboard / timeline / graph / insights / trends / world / stocks / search`，与上方「截图一览」章节顺序一致。
-- **Git 策略**：**工具本身入源码，PNG 产物不入库**（`.gitignore` 已配 `images/`）；首次克隆后跑一次 `capture:shots` 即可在本地复现上方的 8 张截图。
+- **Git 策略**：截图脚本入源码，**PNG 产物随文档一起入库**（`images/` 已被 git 跟踪；刷新截图后记得一并提交）。
 - **CI**：本工具是开发辅助，**不在 CI 自动跑**（需要桌面 Electron 环境）；只在发版前手跑一次刷新文档。
 - **注意事项**：
   - 必须先 `npm run build`，因为脚本依赖 `dist/` + `dist-electron/` 产物。
@@ -245,6 +336,7 @@ lumen/
     export/              # 快照导出 (Markdown/JSON)
     world/               # 国家详情 / 多国对比 / 按日回放时间线（countries:* / world:timeline）
     stocks/              # 行情 watchlist / 腾讯&Mock provider（stocks:*）
+    agent/               # 多智能体：图编译/校验、节点实现、运行时、仓储、checkpoint、记忆结算
     db/                  # sql.js 连接 / 迁移 / 持久化 + 股票缓存/自选股
     ai/                  # provider(ARK/Mock) + 解读器
     dash/                # 总览汇总（dashboard:today）
@@ -252,14 +344,16 @@ lumen/
     ipc/                 # IPC handlers
     index.ts             # 入口
   src/                   # 渲染层 (React)
-    components/          # 总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索
+    components/          # 总览 / 时间线 / 图谱 / 解读 / 趋势 / 世界 / 检索 / 智能体
+    components/agent/    # 智能体画布、图编辑器、prompt 编辑器
     world/               # 世界地图 GeoJSON 归一化 + 大洲聚合（geo / regions）
     stocks/              # 市场×趋势叠线辅助（overlay）
     i18n/                # 中/英字典 + Provider(hook)
-    hooks/               # useInvoke / useEngineStatus
+    hooks/               # useInvoke / useEngineStatus / useAgentRun / useGraphEditor
   resources/             # 世界 GeoJSON（110m，生成物）
   shared/                # 主/渲染共享类型与契约
   tests/                 # vitest 夹具测试
+  e2e/                   # Playwright Electron 真实点击 E2E
   docs/superpowers/      # specs + 里程碑计划 + 交付记录
 ```
 
@@ -267,6 +361,8 @@ lumen/
 
 - 单元/集成测试全用 **fixture**（RSS/HTML 字符串、内存 SQLite），**不依赖真实网络**。
 - `npm test` 覆盖：契约、数据层、采集适配（含中文 RSS）、图谱聚类/仓储、趋势引擎、总览汇总、国家详情/对比、世界按日时间线、大洲聚合映射、股票解析/缓存/自选股、市场×趋势叠线对齐（fixture+Mock，不发网络）、i18n 字典、AI provider/解读（含周报）、insight 仓储、因果链（规则构建/AI 断言/仓储）、跨链合并/全局叙事、叙事 AI 摘要/反事实推演、采集策略设置（持久化/过滤/钳制）、快照导出（Markdown/JSON）、检索。
+- 智能体专项：图校验/条件边、节点实现、运行时事件序列与 `afterSeq` 补拉、审批三出口、token 流式、checkpoint 节流与恢复、跨进程重启、记忆结算、辩论/风控发言时间戳（运行中事件 + 历史回放）。
+- `npm run e2e` 用 Playwright 驱动真实 Electron 窗口跑 6 个场景；不替代人工验收。
 - 真实抓取/真实 ARK 由你在应用里点按钮触发，不在 CI 中验证（本机网络对 GitHub 等不稳）。
 
 ## 局限与路线图
@@ -280,10 +376,15 @@ lumen/
 - **导出快照**：v1 为 Markdown/JSON 全文导出；可扩展为图表 PNG、订阅式自动归档。
 - **股票行情**：行情来自腾讯公开接口（第三方免费源，可能限流/变更）；已支持自选股增删、日/周/月 K 与 5 分钟自动刷新；**M22 新增**自选分组、多种排序、6 项财务指标（PE/PB/总市值/换手率/振幅/量比）与价格预警（涨破/跌破/涨幅阈值 + 系统通知）；下一步可做 K 线技术指标叠加（MA/MACD）或自选导入/导出。
 - **AI**：解读聚焦最热话题（≤400 字）；可按需扩展周报/月报样式与模型切换。
+- **多智能体（默认图）**：多空辩论与三方风控都是**串行轮转**（bull ⇄ bear、aggressive → conservative → neutral），不是真并行；LangGraph 的并行写只体现在 checkpoint 的 pending writes 排序，不会同时发起多次模型调用。
+- **断点续跑**：终态（completed / failed / canceled）会删除 checkpoint，**不能事后恢复调试**；恢复只在 UI 手动点「继续运行」触发，没有自动重启；图 digest 或 prompt 版本变化后旧 run 不可恢复（`E_RESUME_STALE_GRAPH` / `E_RESUME_STALE_PROMPT`）。
+- **在线 smoke**：`npm run e2e` 与 `LUMEN_SMOKE=1` 都走 Mock，**未覆盖真实 ARK 的在线链路**；真实模型需手动配 `ARK_API_KEY` 验收。
+- **智能体画布**：长页面或运行态下偶发节点未绘制（DOM 已存在但画布空白），切走页签再回来可恢复；属已知渲染问题，尚未定位。
+- **分析对象（`subject`）**：只影响 prompt 文案与记忆结算的匹配键（`entity.name` 精确匹配），取证始终读本地全量文章/热点，**不做关键词过滤**——把 `China` 改成 `United States` 不会改变取证语料。
 
 ## IPC 契约一览
 
-主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series` `world:timeline` `stocks:list` `stocks:refresh` `stocks:history` `stocks:watch` `stocks:add` `stocks:remove` `stocks:groups:list` `stocks:groups:create` `stocks:groups:rename` `stocks:groups:remove` `stocks:groups:setWatch` `stocks:alerts:list` `stocks:alerts:add` `stocks:alerts:remove` `stocks:alerts:toggle`。
+主/渲染经 `shared/contracts.ts` 统一定义渠道：`engine:status` `dashboard:today` `collector:manualRun` `graph:build` `topics:list` `insights:generate` `insights:list` `insights:weekly` `causality:list` `causality:generate` `causality:chain` `causality:narratives` `causality:summarize` `causality:counterfactual` `export:snapshot` `settings:get` `settings:update` `search:fulltext` `graph:query` `timeline:replay` `countries:detail` `countries:series` `world:timeline` `stocks:list` `stocks:refresh` `stocks:history` `stocks:watch` `stocks:add` `stocks:remove` `stocks:groups:list` `stocks:groups:create` `stocks:groups:rename` `stocks:groups:remove` `stocks:groups:setWatch` `stocks:alerts:list` `stocks:alerts:add` `stocks:alerts:remove` `stocks:alerts:toggle`；智能体：`agent:graph` `agent:run` `agent:resume` `agent:runs:resume` `agent:runs:resumeCheckpoint` `agent:cancel` `agent:runs:list` `agent:runs:get` `agent:runs:events` `agent:graphs:list` `agent:graphs:get` `agent:graphs:save` `agent:graphs:delete` `agent:graphs:restoreDefault` `agent:memory:list` `agent:memory:settle` `agent:prompts:get` `agent:prompts:save`。
 
 ## 授权说明
 
