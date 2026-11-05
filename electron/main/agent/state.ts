@@ -11,6 +11,7 @@ import type {
   RiskDebateState,
   RunUsage
 } from '../../../shared/agent.js';
+import type { StockFactCheckResult } from '../../../shared/stock-agent.js';
 
 export interface AgentEvidenceBundle {
   [dimension: string]: EvidenceReport;
@@ -65,6 +66,11 @@ export const AgentStateAnnotation = Annotation.Root({
     default: () => undefined
   }),
   decision: Annotation<FinalDecision | undefined>({
+    reducer: (_prev, next) => next,
+    default: () => undefined
+  }),
+  /** M26：裁决后的数字闸门结果；只在股票图使用。 */
+  factCheck: Annotation<StockFactCheckResult | undefined>({
     reducer: (_prev, next) => next,
     default: () => undefined
   }),

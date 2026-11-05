@@ -94,7 +94,7 @@ export default function AgentTab() {
   }, [resumeCheckpoint]);
 
   const loadMemory = useCallback(async () => {
-    const res = (await window.lumen.invoke('agent:memory:list')) as InvokeResult | undefined;
+    const res = (await window.lumen.invoke('agent:memory:list', { scope: 'trend' })) as InvokeResult | undefined;
     if (res?.ok) setMemory(res.data as MemoryListResponse);
   }, []);
 

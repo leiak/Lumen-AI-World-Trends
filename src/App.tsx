@@ -12,6 +12,7 @@ const WorldTab = lazy(() => import('./components/WorldTab'));
 const StocksTab = lazy(() => import('./components/StocksTab'));
 const SearchTab = lazy(() => import('./components/SearchTab'));
 const AgentTab = lazy(() => import('./components/AgentTab'));
+const StockAgentTab = lazy(() => import('./components/StockAgentTab'));
 
 type Tab =
   | 'dashboard'
@@ -22,7 +23,8 @@ type Tab =
   | 'world'
   | 'stocks'
   | 'search'
-  | 'agent';
+  | 'agent'
+  | 'stock-agent';
 
 const TABS: { id: Tab; labelKey: I18nKey }[] = [
   { id: 'dashboard', labelKey: 'nav.dashboard' },
@@ -33,7 +35,8 @@ const TABS: { id: Tab; labelKey: I18nKey }[] = [
   { id: 'world', labelKey: 'nav.world' },
   { id: 'stocks', labelKey: 'nav.stocks' },
   { id: 'search', labelKey: 'nav.search' },
-  { id: 'agent', labelKey: 'nav.agent' }
+  { id: 'agent', labelKey: 'nav.agent' },
+  { id: 'stock-agent', labelKey: 'nav.stockAgent' }
 ];
 
 function Shell() {
@@ -74,6 +77,7 @@ function Shell() {
         {tab === 'stocks' && <StocksTab />}
         {tab === 'search' && <SearchTab />}
         {tab === 'agent' && <AgentTab />}
+        {tab === 'stock-agent' && <StockAgentTab />}
       </Suspense>
     </main>
   );

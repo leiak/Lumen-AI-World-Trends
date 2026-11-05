@@ -11,6 +11,13 @@ import type {
   RunUsage,
   TrendRating
 } from '../../../shared/agent.js';
+import type {
+  StockAttribution,
+  StockFactLayer,
+  StockFactor,
+  StockFactorId
+} from '../../../shared/stock-agent.js';
+import { STOCK_FACT_LAYERS, STOCK_FACTOR_LABELS } from '../../../shared/stock-agent.js';
 
 const RATING_SET = new Set<TrendRating>([
   'strong_up',
@@ -249,7 +256,8 @@ export function mergeDecisionPatch(base: FinalDecision, patch: JsonObject): Fina
     reviewReason:
       rating === 'review'
         ? (merged.reviewReason as string | undefined) ?? 'approval_edit_review'
-        : undefined
+        : undefined,
+    ...(base.stock ? { stock: base.stock } : {})
   };
 }
 
@@ -287,6 +295,76 @@ export function parseFinalDecision(text: string): FinalDecision | null {
     nextCheckAt: obj.nextCheckAt,
     reviewRequired: rating === 'review' ? true : obj.reviewRequired,
     reviewReason: obj.reviewReason as string | undefined
+  };
+}
+
+/** M26：股票裁决除 FinalDecision 外还必须带结构化的归因分解。
+ *  归因不合法视为结构化输出失败，由上层降级为 review（不猜测）。 */
+export function parseStockDecision(text: string): FinalDecision | null {
+  const obj = extractFirstJsonObject(text);
+  if (!obj) return null;
+  const base = parseFinalDecision(JSON.stringify({ ...obj, stock: undefined }));
+  if (!base) return null;
+  const stock = parseStockAttribution(obj.stock);
+  if (!stock) return null;
+  return { ...base, stock };
+}
+
+const FACTOR_IDS: StockFactorId[] = [
+  'earnings_surprise',
+  'guidance_change',
+  'event_driven',
+  'sector_market_beta',
+  'liquidity_sentiment'
+];
+
+function isLayer(v: unknown): v is StockFactLayer {
+  return typeof v === 'string' && (STOCK_FACT_LAYERS as string[]).includes(v);
+}
+
+function parseStockAttribution(raw: unknown): StockAttribution | null {
+  if (!isRecord(raw)) return null;
+  const factorsRaw = raw.factors;
+  if (!Array.isArray(factorsRaw) || factorsRaw.length === 0 || factorsRaw.length > 5) return null;
+  const factors: StockFactor[] = [];
+  for (const item of factorsRaw) {
+    if (!isRecord(item)) return null;
+    if (typeof item.id !== 'string' || !FACTOR_IDS.includes(item.id as StockFactorId)) return null;
+    if (!isLayer(item.layer)) return null;
+    if (item.contribution !== 'positive' && item.contribution !== 'negative' && item.contribution !== 'neutral') {
+      return null;
+    }
+    if (!isFiniteNumber(item.weight, 0, 1)) return null;
+    if (typeof item.mechanism !== 'string' || item.mechanism.trim().length === 0) return null;
+    if (!isStringArray(item.factIds)) return null;
+    const id = item.id as StockFactorId;
+    factors.push({
+      id,
+      label:
+        typeof item.label === 'string' && item.label.trim()
+          ? clipText(item.label, 60)
+          : STOCK_FACTOR_LABELS[id],
+      layer: item.layer,
+      contribution: item.contribution,
+      weight: item.weight as number,
+      mechanism: clipText(item.mechanism, 800),
+      factIds: item.factIds.slice(0, 20)
+    });
+  }
+  const missingLayersRaw = raw.missingLayers;
+  if (!Array.isArray(missingLayersRaw) || !missingLayersRaw.every(isLayer)) return null;
+  if (!isStringArray(raw.assumptions)) return null;
+  if (raw.magnitude !== 'small' && raw.magnitude !== 'medium' && raw.magnitude !== 'large') return null;
+  if (typeof raw.benchmarkSymbol !== 'string' || !raw.benchmarkSymbol.trim()) return null;
+  if (!isStringArray(raw.referencedFactIds)) return null;
+  const missingLayers = Array.from(new Set(missingLayersRaw)) as StockFactLayer[];
+  return {
+    factors,
+    missingLayers,
+    assumptions: raw.assumptions.slice(0, 10).map((a) => clipText(a, 500)),
+    magnitude: raw.magnitude,
+    benchmarkSymbol: raw.benchmarkSymbol.trim(),
+    referencedFactIds: Array.from(new Set(raw.referencedFactIds)).slice(0, 50)
   };
 }
 

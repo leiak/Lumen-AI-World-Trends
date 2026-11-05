@@ -347,7 +347,7 @@ function isTerminal(status: AgentRunStatus | 'idle'): boolean {
   return status === 'completed' || status === 'failed' || status === 'canceled' || status === 'interrupted';
 }
 
-export function useAgentRun() {
+export function useAgentRun(graphId = 'trend-analysis') {
   const [state, dispatch] = useReducer(reducer, IDLE);
   const [graph, setGraph] = useState<GraphSpec>();
   /** P4：当前 active 图的版本/摘要，用于运行绑定与“未保存改动”校验。 */
@@ -374,10 +374,10 @@ export function useAgentRun() {
 
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
-    const res = await invokeAgent<AgentRunSummary[]>('agent:runs:list', { limit: 30 });
+    const res = await invokeAgent<AgentRunSummary[]>('agent:runs:list', { limit: 30, graphId });
     if (res.ok) setRuns(res.data);
     setRunsLoading(false);
-  }, []);
+  }, [graphId]);
 
   const loadGraphSnapshot = useCallback(async (graphId: string, version?: number) => {
     const res = await invokeAgent<AgentGraphGetResponse>('agent:graphs:get', { graphId, version });
@@ -385,7 +385,7 @@ export function useAgentRun() {
   }, []);
 
   const refreshGraph = useCallback(async () => {
-    const snapshot = await loadGraphSnapshot('trend-analysis');
+    const snapshot = await loadGraphSnapshot(graphId);
     if (!snapshot) return;
     setGraph(snapshot.spec);
     setGraphMeta({
@@ -394,7 +394,7 @@ export function useAgentRun() {
       status: snapshot.status,
       isActive: snapshot.isActive
     });
-  }, [loadGraphSnapshot]);
+  }, [loadGraphSnapshot, graphId]);
 
   /** P4：保存新版本后由编辑器回写；若正在回放历史 run，则保留其版本快照不串味。 */
   const applySavedGraph = useCallback((spec: GraphSpec, digest: string) => {

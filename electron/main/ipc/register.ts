@@ -19,6 +19,13 @@ import type {
   StocksView,
   StocksWatchView
 } from '../../../shared/stocks.js';
+import type {
+  StockFactsImportResponse,
+  StockFactsView,
+  StockFact,
+  StockMarketSyncResponse,
+  StockSampleResponse
+} from '../../../shared/stock-agent.js';
 import type { ExportResult } from '../../../shared/contracts.js';
 import type { CrawlSummary } from '../db/persistence.js';
 import type { GraphBuildResult } from '../graph/build.js';
@@ -59,8 +66,13 @@ export interface AgentIpcDeps {
   getEvents: (payload: unknown) => AgentIpcResponse<EventsPage>;
   promptsGet: () => AgentIpcResponse<AgentPromptsGetResponse>;
   promptsSave: (payload: unknown) => AgentIpcResponse<AgentPromptsSaveResponse>;
-  memoryList: () => AgentIpcResponse<MemoryListResponse>;
+  memoryList: (payload?: unknown) => AgentIpcResponse<MemoryListResponse>;
   memorySettle: () => AgentIpcResponse<MemorySettleResponse>;
+  stockFactsList: (payload: unknown) => Promise<AgentIpcResponse<StockFactsView>>;
+  stockFactsImport: (payload: unknown) => Promise<AgentIpcResponse<StockFactsImportResponse>>;
+  stockFactsAdd: (payload: unknown) => Promise<AgentIpcResponse<StockFact | null>>;
+  stockFactsSyncMarket: (payload: unknown) => Promise<AgentIpcResponse<StockMarketSyncResponse>>;
+  stockSample: (payload: unknown) => Promise<AgentIpcResponse<StockSampleResponse>>;
 }
 
 export interface IpcDeps {
@@ -170,8 +182,13 @@ export function registerIpc(deps: IpcDeps): void {
     ipcMain.handle('agent:runs:events', (_e, payload) => agent.getEvents(payload));
     ipcMain.handle('agent:prompts:get', () => agent.promptsGet());
     ipcMain.handle('agent:prompts:save', (_e, payload) => agent.promptsSave(payload));
-    ipcMain.handle('agent:memory:list', () => agent.memoryList());
+    ipcMain.handle('agent:memory:list', (_e, payload) => agent.memoryList(payload));
     ipcMain.handle('agent:memory:settle', () => agent.memorySettle());
+    ipcMain.handle('agent:stocks:facts:list', (_e, payload) => agent.stockFactsList(payload));
+    ipcMain.handle('agent:stocks:facts:import', (_e, payload) => agent.stockFactsImport(payload));
+    ipcMain.handle('agent:stocks:facts:add', (_e, payload) => agent.stockFactsAdd(payload));
+    ipcMain.handle('agent:stocks:facts:syncMarket', (_e, payload) => agent.stockFactsSyncMarket(payload));
+    ipcMain.handle('agent:stocks:sample', (_e, payload) => agent.stockSample(payload));
   }
 }
 

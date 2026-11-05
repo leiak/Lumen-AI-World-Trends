@@ -14,6 +14,10 @@ import type {
   MemoryStats,
   TrendRating
 } from '../../../shared/agent.js';
+import type { StockBaseline, StockFact, StockOutcome } from '../../../shared/stock-agent.js';
+import { STOCK_DEFAULT_BENCHMARK, STOCK_SUBJECT_PREFIX } from '../../../shared/stock-agent.js';
+import { listStockFacts } from '../stocks/facts.js';
+import { dateOnly, tPlusSettleAfter } from '../stocks/calendar.js';
 
 const DAY_MS = 86_400_000;
 
@@ -176,6 +180,10 @@ export function archiveDecisionBaseline(
   }
 ): void {
   if (input.decision.rating === 'review') return;
+  if (input.subject.kind === 'stock') {
+    archiveStockBaseline(db, persist, input);
+    return;
+  }
   const windowDays = clampWindowDays(input.decision.horizonDays);
   const baseline = computeBaseline(db, input.subject.label, input.asOf, windowDays);
   const resolveAfter =
@@ -188,6 +196,243 @@ export function archiveDecisionBaseline(
     [JSON.stringify(baseline), resolveAfter, input.runId]
   );
   persist();
+}
+
+function stockSymbolOfKey(subjectKey: string): string {
+  return subjectKey.startsWith(STOCK_SUBJECT_PREFIX)
+    ? subjectKey.slice(STOCK_SUBJECT_PREFIX.length)
+    : subjectKey;
+}
+
+function closeSeries(facts: StockFact[]): StockFact[] {
+  return facts.filter((f) => f.layer === 'market' && f.metric === 'close' && typeof f.value === 'number');
+}
+
+function lastAtOrBefore(facts: StockFact[], date: string): StockFact | null {
+  const cutoff = dateOnly(date);
+  let found: StockFact | null = null;
+  for (const f of facts) {
+    if (dateOnly(f.effectiveAt) <= cutoff) found = f;
+    else break;
+  }
+  return found;
+}
+
+function indexAtOrBefore(facts: StockFact[], date: string): number {
+  const cutoff = dateOnly(date);
+  let idx = -1;
+  for (let i = 0; i < facts.length; i++) {
+    if (dateOnly(facts[i].effectiveAt) <= cutoff) idx = i;
+    else break;
+  }
+  return idx;
+}
+
+/** M26：股票基准快照。结算触发时间按 asOf 之后的第 5 个交易日（自然日上界）。 */
+function archiveStockBaseline(
+  db: Database,
+  persist: () => void,
+  input: { runId: string; subject: AgentSubject; asOf: string; decision: FinalDecision }
+): void {
+  const symbol = stockSymbolOfKey(input.subject.key);
+  const market = closeSeries(listStockFacts(db, symbol, input.asOf));
+  const entry = market.length > 0 ? market[market.length - 1] : null;
+  const benchmarkFacts = closeSeries(listStockFacts(db, STOCK_DEFAULT_BENCHMARK, input.asOf));
+  const benchEntry = benchmarkFacts.length > 0 ? benchmarkFacts[benchmarkFacts.length - 1] : null;
+  const baseline: StockBaseline = {
+    capturedAt: new Date().toISOString(),
+    asOf: input.asOf,
+    entryDate: entry ? dateOnly(entry.effectiveAt) : null,
+    entryClose: entry && typeof entry.value === 'number' ? entry.value : null,
+    benchmarkSymbol: STOCK_DEFAULT_BENCHMARK,
+    benchmarkEntryClose: benchEntry && typeof benchEntry.value === 'number' ? benchEntry.value : null
+  };
+  const resolveAfter = tPlusSettleAfter(input.asOf, 5);
+  db.exec(
+    `UPDATE agent_decision SET baseline_json = ?, resolve_after = ?
+     WHERE run_id = ? AND status = 'pending'`,
+    [JSON.stringify(baseline), resolveAfter, input.runId]
+  );
+  persist();
+}
+
+function judgeStockReturn(
+  rating: TrendRating,
+  excessPct: number
+): { hit: boolean; reason: string } {
+  if (rating === 'neutral') {
+    const hit = Math.abs(excessPct) <= 2;
+    return {
+      hit,
+      reason: `T+5 相对基准超额收益 ${excessPct.toFixed(2)}%，中性判断${hit ? '成立（未显著偏离基准）' : '落空（显著偏离基准）'}`
+    };
+  }
+  const bullish = rating === 'up' || rating === 'strong_up';
+  const hit = bullish ? excessPct > 0 : excessPct < 0;
+  return {
+    hit,
+    reason: `T+5 相对基准超额收益 ${excessPct.toFixed(2)}%，${bullish ? '看多' : '看空'}判断${hit ? '命中' : '落空'}`
+  };
+}
+
+function pct(a: number, b: number): number {
+  return Number((((b - a) / a) * 100).toFixed(4));
+}
+
+/** M26：股票结算 —— 主口径 T+5（按 K 线序号），T+1/T+20 仅诊断。 */
+function settleStockDecision(
+  db: Database,
+  persist: () => void,
+  row: DecisionRow,
+  now: string
+): MemorySettleDetail {
+  const symbol = stockSymbolOfKey(row.subject_key);
+  const baseline = parseJson<StockBaseline | undefined>(row.baseline_json, undefined);
+  const market = closeSeries(listStockFacts(db, symbol, now));
+  const bench = closeSeries(listStockFacts(db, STOCK_DEFAULT_BENCHMARK, now));
+  const entryDate = baseline?.entryDate ?? null;
+
+  const insufficient = (reason: string): MemorySettleDetail => {
+    const outcome: MemoryOutcome = {
+      windowStart: row.as_of,
+      windowEnd: now,
+      articleCount: 0,
+      hotRank: null,
+      momentum: 0,
+      articleDelta: 0,
+      hotRankDelta: null,
+      momentumDelta: 0,
+      verdict: 'inconclusive',
+      hit: null,
+      reason,
+      stock: {
+        horizon: 'T+5',
+        entryDate: entryDate ?? '',
+        exitDate: null,
+        entryClose: baseline?.entryClose ?? null,
+        exitClose: null,
+        stockReturnPct: null,
+        benchmarkSymbol: baseline?.benchmarkSymbol ?? STOCK_DEFAULT_BENCHMARK,
+        benchmarkReturnPct: null,
+        excessReturnPct: null,
+        verdict: 'inconclusive',
+        diagnostics: { t1: null, t20: null },
+        reason
+      }
+    };
+    const reflection = `无法结算「${row.subject_label}」：${reason}。已标记 insufficient，不计入命中率。`;
+    db.exec(
+      `UPDATE agent_decision SET status = 'insufficient', resolved_at = ?, outcome_json = ?, reflection = ?
+       WHERE id = ? AND status = 'pending'`,
+      [now, JSON.stringify(outcome), reflection, row.id]
+    );
+    persist();
+    return { decisionId: row.id, subjectKey: row.subject_key, status: 'insufficient', message: reason };
+  };
+
+  if (!baseline || baseline.entryClose === null || !entryDate) {
+    return insufficient('缺少股票基准快照（决策时没有可用收盘价）');
+  }
+  const entryIdx = indexAtOrBefore(market, entryDate);
+  if (entryIdx < 0) return insufficient('结算窗口内找不到入场日收盘价');
+  const exitIdx = entryIdx + 5;
+  if (exitIdx >= market.length) {
+    return insufficient(`T+5 交易日数据不足（仅 ${market.length - entryIdx - 1} 个后续收盘价）`);
+  }
+  const exit = market[exitIdx];
+  const entryClose = Number(baseline.entryClose);
+  const exitClose = Number(exit.value);
+  const stockReturnPct = pct(entryClose, exitClose);
+
+  const benchEntry = lastAtOrBefore(bench, entryDate);
+  const benchIdx = benchEntry ? indexAtOrBefore(bench, entryDate) : -1;
+  const benchExitIdx = benchIdx >= 0 ? benchIdx + 5 : -1;
+  const benchExit = benchExitIdx >= 0 && benchExitIdx < bench.length ? bench[benchExitIdx] : null;
+  const benchmarkReturnPct =
+    benchEntry && benchExit && typeof benchEntry.value === 'number' && typeof benchExit.value === 'number'
+      ? pct(benchEntry.value, benchExit.value)
+      : null;
+  const excessReturnPct = benchmarkReturnPct === null ? null : Number((stockReturnPct - benchmarkReturnPct).toFixed(4));
+
+  const t1Idx = entryIdx + 1;
+  const t20Idx = entryIdx + 20;
+  const t1 = t1Idx < market.length ? pct(entryClose, Number(market[t1Idx].value)) : null;
+  const t20 = t20Idx < market.length ? pct(entryClose, Number(market[t20Idx].value)) : null;
+
+  if (excessReturnPct === null) {
+    return insufficient('基准（sh000300）T+5 收盘价缺失，无法计算超额收益');
+  }
+
+  const judged = judgeStockReturn(row.rating, excessReturnPct);
+  const outcome: StockOutcome = {
+    horizon: 'T+5',
+    entryDate,
+    exitDate: dateOnly(exit.effectiveAt),
+    entryClose,
+    exitClose,
+    stockReturnPct,
+    benchmarkSymbol: baseline.benchmarkSymbol ?? STOCK_DEFAULT_BENCHMARK,
+    benchmarkReturnPct,
+    excessReturnPct,
+    verdict: judged.hit ? 'hit' : 'miss',
+    diagnostics: { t1, t20 },
+    reason: judged.reason
+  };
+  const memoryOutcome: MemoryOutcome = {
+    windowStart: row.as_of,
+    windowEnd: outcome.exitDate ?? now,
+    articleCount: 0,
+    hotRank: null,
+    momentum: 0,
+    articleDelta: 0,
+    hotRankDelta: null,
+    momentumDelta: 0,
+    verdict: judged.hit ? 'hit' : 'miss',
+    hit: judged.hit,
+    reason: judged.reason,
+    stock: outcome
+  };
+  const reflection =
+    `在 ${row.as_of} 对「${row.subject_label}」给出 ${row.rating}（T+5 交易日窗口）。` +
+    `结算：${outcome.entryDate} 收盘 ${outcome.entryClose} → ${outcome.exitDate} 收盘 ${outcome.exitClose}，` +
+    `个股 ${stockReturnPct.toFixed(2)}%，基准 ${benchmarkReturnPct === null ? '—' : benchmarkReturnPct.toFixed(2)}%，超额 ${excessReturnPct.toFixed(2)}%。` +
+    `判为${judged.hit ? '命中' : '落空'}。`;
+  const existingMemory = Number(
+    scalar(db, `SELECT COUNT(*) AS value FROM agent_memory WHERE decision_id = ?`, [row.id]) ?? 0
+  );
+  if (existingMemory > 0) {
+    return { decisionId: row.id, subjectKey: row.subject_key, status: 'already_settled', message: '记忆已存在，幂等跳过' };
+  }
+  const memoryId = `mem_${row.id}`;
+  db.exec(
+    `INSERT OR IGNORE INTO agent_memory
+      (id, decision_id, subject_key, as_of, resolved_at, rating, horizon_days, outcome_json, reflection, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      memoryId,
+      row.id,
+      row.subject_key,
+      row.as_of,
+      now,
+      row.rating,
+      5,
+      JSON.stringify(memoryOutcome),
+      reflection,
+      now
+    ]
+  );
+  db.exec(
+    `UPDATE agent_decision SET status = 'settled', resolved_at = ?, outcome_json = ?, reflection = ?
+     WHERE id = ? AND status = 'pending'`,
+    [now, JSON.stringify(memoryOutcome), reflection, row.id]
+  );
+  persist();
+  return {
+    decisionId: row.id,
+    subjectKey: row.subject_key,
+    status: 'settled',
+    message: judged.hit ? '结算完成：命中' : '结算完成：落空'
+  };
 }
 
 interface DecisionRow extends Record<string, unknown> {
@@ -232,8 +477,8 @@ function toDecisionView(row: DecisionRow): MemoryDecisionView {
   };
 }
 
-function memoryRows(db: Database): MemoryRecord[] {
-  return rows(db, `SELECT * FROM agent_memory ORDER BY resolved_at DESC`).map((r) => ({
+function memoryRows(db: Database, filter = ''): MemoryRecord[] {
+  return rows(db, `SELECT * FROM agent_memory ${filter} ORDER BY resolved_at DESC`).map((r) => ({
     id: String(r.id),
     decisionId: String(r.decision_id),
     subjectKey: String(r.subject_key),
@@ -259,12 +504,34 @@ function memoryRows(db: Database): MemoryRecord[] {
   }));
 }
 
-export function listMemoryView(db: Database): MemoryListResponse {
-  const pending = decisionRows(db, `WHERE status = 'pending' ORDER BY resolve_after ASC`).map(toDecisionView);
-  const insufficient = decisionRows(db, `WHERE status = 'insufficient' ORDER BY resolved_at DESC LIMIT 50`).map(
-    toDecisionView
-  );
-  const allSettled = memoryRows(db);
+/**
+ * 记忆作用域：trend 为原有智能体口径（topic/country/event），stock 为股票口径。
+ * 不传时保持旧行为（全量返回），供旧调用方兼容。
+ */
+export type MemoryScope = 'trend' | 'stock';
+
+function scopeFilter(scope?: MemoryScope): string {
+  if (scope === 'stock') return `subject_key LIKE 'stock:%'`;
+  if (scope === 'trend') return `subject_key NOT LIKE 'stock:%'`;
+  return '';
+}
+
+function andWhere(base: string, extra: string): string {
+  if (!extra) return base;
+  return `${base} AND ${extra}`;
+}
+
+export function listMemoryView(db: Database, scope?: MemoryScope): MemoryListResponse {
+  const filter = scopeFilter(scope);
+  const pending = decisionRows(
+    db,
+    `WHERE ${andWhere(`status = 'pending'`, filter)} ORDER BY resolve_after ASC`
+  ).map(toDecisionView);
+  const insufficient = decisionRows(
+    db,
+    `WHERE ${andWhere(`status = 'insufficient'`, filter)} ORDER BY resolved_at DESC LIMIT 50`
+  ).map(toDecisionView);
+  const allSettled = memoryRows(db, filter ? `WHERE ${filter}` : '');
   const settled = allSettled.slice(0, 100);
   const stats: MemoryStats = {
     pending: pending.length,
@@ -382,6 +649,10 @@ export function settleDecisionById(
   }
   if (!row.resolve_after || isoTime(row.resolve_after) > isoTime(now)) {
     return { decisionId, subjectKey: row.subject_key, status: 'not_due', message: '结算窗口尚未到期' };
+  }
+
+  if (row.subject_key.startsWith(STOCK_SUBJECT_PREFIX)) {
+    return settleStockDecision(db, persist, row, now);
   }
 
   const windowDays = clampWindowDays(options.windowDays ?? row.horizon_days);

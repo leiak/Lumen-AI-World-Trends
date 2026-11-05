@@ -33,10 +33,11 @@ export type AgentIpcResponse<T> =
   | { ok: false; code: AgentErrorCode; message: string; details?: unknown };
 
 export interface AgentSubject {
-  /** 归一化 key，如 topic:china / country:US / event:evt-123 */
+  /** 归一化 key，如 topic:china / country:US / event:evt-123 / stock:sh600519 */
   key: string;
   label: string;
-  kind: 'topic' | 'country' | 'event';
+  /** stock 为 M26 股票分析独立入口；其余取值保持原智能体语义。 */
+  kind: 'topic' | 'country' | 'event' | 'stock';
 }
 
 // —— P6：角色 prompt 编辑 ——
@@ -254,8 +255,19 @@ export interface EvidenceSignal {
   sourceIds: string[];
 }
 
+/** 世界趋势维度（原有 4 个）与股票维度（M26 新增 4 个）。 */
+export type EvidenceDimension =
+  | 'heat'
+  | 'sentiment'
+  | 'geopolitics'
+  | 'structure'
+  | 'market'
+  | 'fundamentals'
+  | 'disclosures'
+  | 'news';
+
 export interface EvidenceReport {
-  dimension: 'heat' | 'sentiment' | 'geopolitics' | 'structure';
+  dimension: EvidenceDimension;
   summary: string;
   signals: EvidenceSignal[];
   dataGaps: string[];
@@ -339,6 +351,8 @@ export interface FinalDecision {
   nextCheckAt: string;
   reviewRequired: boolean;
   reviewReason?: string;
+  /** M26：股票分析附带的归因分解；世界趋势决策不带该字段。 */
+  stock?: import('./stock-agent.js').StockAttribution;
 }
 
 // —— 记忆：结算基准、结果、反思 ——
@@ -371,6 +385,8 @@ export interface MemoryOutcome {
   verdict: MemoryVerdict;
   hit: boolean | null;
   reason: string;
+  /** M26：股票结算走 T+5 超额收益口径；此时上面的热度字段为 0/null。 */
+  stock?: import('./stock-agent.js').StockOutcome;
 }
 
 export interface MemoryInjection {
@@ -408,7 +424,8 @@ export interface MemoryDecisionView {
   horizonDays: number;
   resolveAfter: string;
   status: DecisionStatus;
-  baseline?: MemoryBaseline;
+  /** 世界趋势用热度基准；股票分析（M26）用 StockBaseline。 */
+  baseline?: MemoryBaseline | import('./stock-agent.js').StockBaseline;
   outcome?: MemoryOutcome;
   reflection?: string;
   resolvedAt?: string;
@@ -424,6 +441,11 @@ export interface MemoryStats {
   inconclusive: number;
   /** hits / (hits + misses)；无可结算记录时为 0。 */
   hitRate: number;
+}
+
+/** 记忆面板作用域：trend 为原智能体口径，stock 为股票口径；缺省返回全量（旧行为）。 */
+export interface MemoryListRequest {
+  scope?: 'trend' | 'stock';
 }
 
 export interface MemoryListResponse {
@@ -465,6 +487,8 @@ export type AgentNodeType =
   | 'bull'
   | 'bear'
   | 'judge'
+  /** M26：裁决后的数字闸门；只在股票图使用，不影响世界趋势默认图。 */
+  | 'fact_check'
   | 'planner'
   | 'risk_aggressive'
   | 'risk_conservative'
@@ -477,6 +501,7 @@ export const AGENT_NODE_TYPES: AgentNodeType[] = [
   'bull',
   'bear',
   'judge',
+  'fact_check',
   'planner',
   'risk_aggressive',
   'risk_conservative',
@@ -490,8 +515,6 @@ export const RISK_NODE_TYPES: AgentNodeType[] = [
   'risk_neutral'
 ];
 
-export type EvidenceDimension = EvidenceReport['dimension'];
-
 export type NodeConfig =
   | { type: 'memory'; lookbackDays: number; maxLessons: number }
   | {
@@ -503,6 +526,7 @@ export type NodeConfig =
   | { type: 'bull'; maxRounds: number }
   | { type: 'bear'; maxRounds: number }
   | { type: 'judge'; requireDirection: true }
+  | { type: 'fact_check'; toleranceBps: number }
   | { type: 'planner'; maxTriggers: number }
   | { type: 'risk_aggressive'; maxRounds: number }
   | { type: 'risk_conservative'; maxRounds: number }
@@ -786,4 +810,6 @@ export interface AgentRunDetail extends AgentRunSummary {
 
 export interface AgentRunsListRequest {
   limit?: number;
+  /** 按图隔离运行列表；缺省返回全部（兼容旧调用）。 */
+  graphId?: string;
 }

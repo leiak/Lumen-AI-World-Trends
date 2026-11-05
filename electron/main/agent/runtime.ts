@@ -41,6 +41,7 @@ import type {
   StartRunResponse
 } from '../../../shared/agent.js';
 import { AGENT_PROMPT_ROLES } from '../../../shared/agent.js';
+import { STOCK_GRAPH_ID } from '../../../shared/stock-agent.js';
 import type { AiProvider, ChatMessage } from '../ai/provider.js';
 import { DEFAULT_PROMPT_PACK, validatePromptText } from './prompt-policy.js';
 import { RunEventBus } from './events.js';
@@ -327,7 +328,7 @@ export class AgentRuntime {
   }
 
   listRuns(req?: AgentRunsListRequest): AgentIpcResponse<AgentRunSummary[]> {
-    return ok(this.repo.listRuns(req?.limit));
+    return ok(this.repo.listRuns(req?.limit, req?.graphId));
   }
 
   getRun(runId: string): AgentIpcResponse<AgentRunDetail> {
@@ -865,9 +866,19 @@ export class AgentRuntime {
       typeof subject.label !== 'string' ||
       subject.label.trim().length === 0 ||
       subject.label.length > 100 ||
-      (subject.kind !== 'topic' && subject.kind !== 'country' && subject.kind !== 'event')
+      (subject.kind !== 'topic' &&
+        subject.kind !== 'country' &&
+        subject.kind !== 'event' &&
+        subject.kind !== 'stock')
     ) {
       return { error: error('E_VALIDATION', 'subject 非法') };
+    }
+    // 图与主体命名空间隔离：股票图只能跑 stock 主体，stock 主体也只能跑股票图。
+    if (req.graphId === STOCK_GRAPH_ID && subject.kind !== 'stock') {
+      return { error: error('E_VALIDATION', 'stock-analysis 图只接受 kind=stock 的主体') };
+    }
+    if (subject.kind === 'stock' && req.graphId !== STOCK_GRAPH_ID) {
+      return { error: error('E_VALIDATION', 'kind=stock 的主体只能在 stock-analysis 图上运行') };
     }
     if (!isIso(req.asOf)) return { error: error('E_VALIDATION', 'asOf 必须是 ISO 时间') };
     const nowMs = Date.parse(this.now());

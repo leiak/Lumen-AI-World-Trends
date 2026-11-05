@@ -53,7 +53,12 @@ export const ALL_CHANNELS = [
   'agent:memory:list',
   'agent:memory:settle',
   'agent:prompts:get',
-  'agent:prompts:save'
+  'agent:prompts:save',
+  'agent:stocks:facts:list',
+  'agent:stocks:facts:import',
+  'agent:stocks:facts:add',
+  'agent:stocks:facts:syncMarket',
+  'agent:stocks:sample'
 ] as const;
 
 export type Channel = (typeof ALL_CHANNELS)[number];

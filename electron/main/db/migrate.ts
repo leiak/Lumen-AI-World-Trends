@@ -406,6 +406,78 @@ CREATE INDEX IF NOT EXISTS idx_agent_decision_run ON agent_decision(run_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_decision ON agent_memory(decision_id);
 `;
 
+/** M26：股票分析独立入口。
+ *  只做追加式变更：重建 agent_run 以放宽 subject_kind CHECK（加入 stock），并新增 stock_fact。
+ *  旧 run 的全部列原样拷贝，升级后历史仍可回看；不删除任何旧列/旧表。 */
+const MIGRATION_17_DDL = `
+DROP TABLE IF EXISTS agent_run_v17;
+CREATE TABLE agent_run_v17 (
+  run_id TEXT PRIMARY KEY,
+  graph_id TEXT NOT NULL,
+  graph_version INTEGER NOT NULL,
+  thread_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued','running','interrupted','completed','failed','canceled')),
+  subject_key TEXT NOT NULL,
+  subject_label TEXT NOT NULL,
+  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('topic','country','event','stock')),
+  as_of TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  config_json TEXT NOT NULL,
+  state_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  rating TEXT,
+  review_required INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  calls INTEGER NOT NULL DEFAULT 0,
+  prompt_chars INTEGER NOT NULL DEFAULT 0,
+  completion_chars INTEGER NOT NULL DEFAULT 0,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  cost_usd REAL,
+  graph_digest TEXT,
+  suspend_json TEXT,
+  prompt_version INTEGER NOT NULL DEFAULT 0,
+  prompt_digest TEXT,
+  prompt_json TEXT,
+  recovery_json TEXT
+);
+INSERT OR IGNORE INTO agent_run_v17
+  (run_id, graph_id, graph_version, thread_id, status, subject_key, subject_label, subject_kind,
+   as_of, started_at, ended_at, config_json, state_json, error_code, error_message, rating,
+   review_required, model, calls, prompt_chars, completion_chars, tokens_in, tokens_out, cost_usd,
+   graph_digest, suspend_json, prompt_version, prompt_digest, prompt_json, recovery_json)
+  SELECT run_id, graph_id, graph_version, thread_id, status, subject_key, subject_label, subject_kind,
+   as_of, started_at, ended_at, config_json, state_json, error_code, error_message, rating,
+   review_required, model, calls, prompt_chars, completion_chars, tokens_in, tokens_out, cost_usd,
+   graph_digest, suspend_json, prompt_version, prompt_digest, prompt_json, recovery_json
+  FROM agent_run;
+DROP TABLE agent_run;
+ALTER TABLE agent_run_v17 RENAME TO agent_run;
+CREATE INDEX IF NOT EXISTS idx_agent_run_status ON agent_run(status, started_at);
+CREATE INDEX IF NOT EXISTS idx_agent_run_subject ON agent_run(subject_key, as_of);
+CREATE INDEX IF NOT EXISTS idx_agent_run_graph ON agent_run(graph_id, started_at);
+
+CREATE TABLE IF NOT EXISTS stock_fact (
+  fact_id TEXT PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  layer TEXT NOT NULL CHECK (layer IN ('market','fundamentals','disclosures','news')),
+  metric TEXT NOT NULL,
+  value REAL,
+  value_text TEXT,
+  unit TEXT,
+  period TEXT,
+  published_at TEXT NOT NULL,
+  effective_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  raw_text TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stock_fact_symbol ON stock_fact(symbol, layer, effective_at);
+CREATE INDEX IF NOT EXISTS idx_stock_fact_effective ON stock_fact(symbol, effective_at);
+`;
+
 function readSchemaVersion(db: Database): number {
   try {
     const res = db.exec("SELECT value FROM meta WHERE key='schema_version'");
@@ -442,9 +514,12 @@ export function migrate(db: Database): void {
     db.exec(MIGRATION_16_DDL);
     for (const stmt of MIGRATION_16_ALTERS) safeAlter(db, stmt);
   }
+  if (existing < 17) {
+    db.exec(MIGRATION_17_DDL);
+  }
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '16');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '17');`
   );
 }
 

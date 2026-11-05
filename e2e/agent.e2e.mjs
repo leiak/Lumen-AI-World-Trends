@@ -836,8 +836,15 @@ async function main() {
       const key = `${parsed.event.nodeId}#${parsed.event.attempt}`;
       startedKeys.set(key, (startedKeys.get(key) ?? 0) + 1);
     }
+    // 崩溃前已成功的节点：同一 (nodeId, attempt) 的 started 只能有 1 次。
+    // 崩溃瞬间仍在执行的节点不属于“已完成”，允许以同 attempt 重启并再次 started。
+    const completedBefore = new Set(
+      [...beforeSucceeded.keys()].map((k) => k.replace(':', '#'))
+    );
     for (const [key, count] of startedKeys) {
-      if (count !== 1) throw new Error(`节点 ${key} 的 started 事件出现 ${count} 次`);
+      if (completedBefore.has(key) && count !== 1) {
+        throw new Error(`已完成节点 ${key} 的 started 事件出现 ${count} 次`);
+      }
     }
     const resumed = after.events.find((e) => {
       try {
@@ -849,6 +856,110 @@ async function main() {
     if (!resumed || resumed.seq <= before.maxSeq) throw new Error('run.resumed 未出现在重启后的新 seq');
   });
 
+  // ————————————————————————————————————————————————————————————————
+  // M26：独立「股票AI分析」页签。导入内置样例 → 全链路 → 数字闸门 → 审批 → completed。
+  await scenario('S10 股票AI分析页签：样例导入→运行→数字闸门→审批→completed', async () => {
+    const dirH = tmpDir('lumen-e2e-h');
+    const dbH = path.join(dirH, 'lumen.db');
+    const { app, page } = await launch(dirH, 120);
+    try {
+      await page.click('[data-testid="nav-stock-agent"]');
+      await page.waitForSelector('[data-testid="stock-start"]', { timeout: 20000 });
+      await page.click('[data-testid="stock-import-sample"]');
+      // 四层事实都应为 ok（样例包含行情/财报/公告/舆情）。
+      await page.waitForFunction(
+        () => {
+          const els = [...document.querySelectorAll('[data-testid="stock-coverage"] [data-status]')];
+          return els.length === 4 && els.every((e) => e.getAttribute('data-status') === 'ok');
+        },
+        null,
+        { timeout: 20000, polling: 25 }
+      );
+      const layers = await page.$$eval('[data-testid="stock-coverage"] [data-status]', (els) =>
+        els.map((e) => `${e.getAttribute('data-layer')}:${e.getAttribute('data-status')}`)
+      );
+      if (layers.join(',') !== 'market:ok,fundamentals:ok,disclosures:ok,news:ok') {
+        throw new Error(`事实覆盖度异常：${layers.join(',')}`);
+      }
+
+      await page.click('[data-testid="stock-start"]');
+      await page.waitForSelector('[data-testid="stock-approval"]', { timeout: 30000 });
+      if ((await page.getAttribute('[data-testid="stock-run-state"]', 'data-status')) !== 'interrupted') {
+        throw new Error('股票分析审批挂起后状态不是 interrupted');
+      }
+      if ((await page.getAttribute('[data-testid="stock-fact-check"]', 'data-ok')) !== 'true') {
+        throw new Error('股票结论未通过数字闸门');
+      }
+      const rating = await page.getAttribute(
+        '[data-testid="stock-conclusion"] .rating-badge',
+        'data-rating'
+      );
+      if (!rating || rating === 'review') throw new Error(`四层齐备时不应是 ${rating}`);
+
+      await page.click('[data-testid="stock-approve"]');
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="stock-run-state"]')?.getAttribute('data-status') ===
+          'completed',
+        null,
+        { timeout: 30000, polling: 25 }
+      );
+      const doneRating = await page.getAttribute(
+        '[data-testid="stock-conclusion"] .rating-badge',
+        'data-rating'
+      );
+      if (!doneRating) throw new Error('completed 后股票结论卡缺少评级');
+      // 智能体页签的历史不能被股票 run 污染。
+      await page.click('[data-testid="nav-agent"]');
+      await page.waitForSelector('[data-testid="agent-start"]', { timeout: 20000 });
+      const agentRows = await page.$$eval('[data-testid="agent-run-row"]', (els) => els.length);
+      if (agentRows !== 0) throw new Error(`股票页签运行污染了智能体历史：${agentRows} 行`);
+    } finally {
+      await closeApp(app);
+    }
+
+    const facts = await queryDb(dbH, (db) => {
+      const run = db.exec(
+        `SELECT run_id, graph_id, subject_kind, status FROM agent_run WHERE graph_id = 'stock-analysis' ORDER BY started_at DESC LIMIT 1`
+      );
+      const row = run[0]?.values[0] ?? null;
+      const nodes = db.exec(
+        `SELECT node_id, status FROM agent_node_result WHERE run_id = '${row?.[0] ?? ''}'`
+      );
+      const facts = db.exec(`SELECT COUNT(*) FROM stock_fact`);
+      const gate = db.exec(
+        `SELECT output_json FROM agent_node_result
+         WHERE run_id = '${row?.[0] ?? ''}' AND node_id = 'fact_check'
+         ORDER BY attempt DESC LIMIT 1`
+      );
+      const decision = db.exec(
+        `SELECT status, baseline_json FROM agent_decision WHERE run_id = '${row?.[0] ?? ''}'`
+      );
+      return {
+        row,
+        nodes: (nodes[0]?.values ?? []).map((v) => ({ nodeId: v[0], status: v[1] })),
+        factCount: Number(facts[0]?.values[0]?.[0] ?? 0),
+        gate: gate[0]?.values[0]?.[0] ?? null,
+        decision: decision[0]?.values[0] ?? null
+      };
+    });
+    if (!facts.row) throw new Error('库中没有 stock-analysis 运行记录');
+    if (facts.row[2] !== 'stock' || facts.row[3] !== 'completed') {
+      throw new Error(`股票 run 落库异常：kind=${facts.row[2]} status=${facts.row[3]}`);
+    }
+    if (facts.factCount < 20) throw new Error(`stock_fact 写入过少：${facts.factCount}`);
+    if (facts.nodes.filter((n) => n.nodeId === 'fact_check').length !== 1) {
+      throw new Error('fact_check 节点应恰好执行一次');
+    }
+    if (facts.nodes.filter((n) => n.nodeId === 'judge').length !== 1) {
+      throw new Error('judge 节点在审批恢复后被重跑');
+    }
+    if (!facts.gate || !facts.gate.includes('"ok":true')) throw new Error('fact_check 事件未记录通过');
+    if (!facts.decision || facts.decision[0] !== 'pending' || !facts.decision[1]) {
+      throw new Error('股票决策未留下 pending 基准快照（记忆结算缺少依据）');
+    }
+  });
+
   console.log('');
   const passed = results.filter((r) => r.ok).length;
   console.log(`E2E 结果：${passed}/${results.length} 通过`);
@@ -856,9 +967,12 @@ async function main() {
     for (const r of results.filter((x) => !x.ok)) console.log(`  - ${r.name}: ${r.error}`);
     process.exitCode = 1;
   }
+  // Playwright 在异常场景下可能残留连接句柄，导致脚本跑完不退出；显式收尾。
+  setTimeout(() => process.exit(process.exitCode ?? 0), 1000);
 }
 
 main().catch((err) => {
   console.error('E2E 执行失败：', err);
   process.exitCode = 1;
+  setTimeout(() => process.exit(1), 1000);
 });

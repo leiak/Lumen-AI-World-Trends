@@ -23,8 +23,22 @@ import { computeTrends } from './trends/engine.js';
 import { interpretCausal, interpretWeekly } from './ai/interpreter.js';
 import { createProvider, MockProvider } from './ai/provider.js';
 import { AgentRuntime } from './agent/runtime.js';
-import { defaultGraphSpec } from './agent/spec.js';
+import { defaultGraphSpec, stockGraphSpec } from './agent/spec.js';
 import { listMemoryView, settleDueMemory } from './agent/memory.js';
+import {
+  addStockFact,
+  buildSampleCsv,
+  importFactsCsv,
+  stockFactsView,
+  syncMarketFacts
+} from './stocks/facts.js';
+import type {
+  StockFactsImportRequest,
+  StockFactsQuery,
+  StockFactAddRequest,
+  StockMarketSyncRequest,
+  StockSampleResponse
+} from '../../shared/stock-agent.js';
 import {
   AGENT_EVENT_CHANNEL,
   type AgentGraphDeleteRequest,
@@ -174,6 +188,7 @@ void app.whenReady().then(async () => {
   });
   try {
     agentRuntime.ensureDefaultGraph(defaultGraphSpec());
+    agentRuntime.ensureDefaultGraph(stockGraphSpec());
     const recovery = agentRuntime.markInterruptedFromPreviousProcess();
     if (recovery.recoverable > 0) {
       console.info(`[lumen] ${recovery.recoverable} 个审批挂起 run 可在重启后恢复`);
@@ -274,7 +289,13 @@ void app.whenReady().then(async () => {
       getEvents: (payload) => agentRuntime.getEvents((payload ?? {}) as EventsPageRequest),
       promptsGet: () => agentRuntime.getPrompts(),
       promptsSave: (payload) => agentRuntime.savePrompts((payload ?? {}) as AgentPromptsSaveRequest),
-      memoryList: () => ({ ok: true, data: listMemoryView(getDb()) }),
+      memoryList: (payload) => {
+        const scope = (payload as import('../../shared/agent.js').MemoryListRequest | undefined)?.scope;
+        return {
+          ok: true,
+          data: listMemoryView(getDb(), scope === 'stock' || scope === 'trend' ? scope : undefined)
+        };
+      },
       memorySettle: () => {
         try {
           return { ok: true, data: settleDueMemory(getDb(), persist) };
@@ -285,6 +306,62 @@ void app.whenReady().then(async () => {
             message: `结算失败: ${err instanceof Error ? err.message : String(err)}`
           };
         }
+      },
+      stockFactsList: async (payload) => {
+        try {
+          const q = (payload ?? {}) as StockFactsQuery;
+          const symbol = String(q.symbol ?? '').trim().toLowerCase();
+          if (!symbol) return { ok: false, code: 'E_VALIDATION', message: 'symbol 不能为空' };
+          const asOf = q.asOf && String(q.asOf).trim() ? String(q.asOf) : new Date().toISOString();
+          return { ok: true, data: stockFactsView(getDb(), symbol, asOf) };
+        } catch (err) {
+          return { ok: false, code: 'E_DB', message: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      stockFactsImport: async (payload) => {
+        try {
+          const req = (payload ?? {}) as StockFactsImportRequest;
+          if (typeof req.csv !== 'string' || req.csv.trim().length === 0) {
+            return { ok: false, code: 'E_VALIDATION', message: 'csv 不能为空' };
+          }
+          const asOf = new Date().toISOString();
+          const data = importFactsCsv(getDb(), persist, req, asOf);
+          if (data.errors.length > 0 && data.imported === 0) {
+            return { ok: false, code: 'E_VALIDATION', message: data.errors[0].message, data };
+          }
+          return { ok: true, data };
+        } catch (err) {
+          return { ok: false, code: 'E_DB', message: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      stockFactsAdd: async (payload) => {
+        try {
+          const req = (payload ?? {}) as StockFactAddRequest;
+          const fact = addStockFact(getDb(), persist, req.fact);
+          if (!fact) return { ok: false, code: 'E_VALIDATION', message: '事实字段不合法' };
+          return { ok: true, data: fact };
+        } catch (err) {
+          return { ok: false, code: 'E_DB', message: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      stockFactsSyncMarket: async (payload) => {
+        try {
+          const req = (payload ?? {}) as StockMarketSyncRequest;
+          const symbol = String(req.symbol ?? '').trim().toLowerCase();
+          if (!symbol) return { ok: false, code: 'E_VALIDATION', message: 'symbol 不能为空' };
+          const asOf = req.asOf && String(req.asOf).trim() ? String(req.asOf) : new Date().toISOString();
+          return {
+            ok: true,
+            data: await syncMarketFacts(getDb(), persist, stockProvider, symbol, asOf)
+          };
+        } catch (err) {
+          return { ok: false, code: 'E_DB', message: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      stockSample: async (payload) => {
+        const p = (payload ?? {}) as { symbol?: string };
+        const data: StockSampleResponse = buildSampleCsv(p.symbol || undefined);
+        return { ok: true, data };
       }
     },
     runDashboard: async () => ({

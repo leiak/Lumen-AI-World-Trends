@@ -64,6 +64,7 @@ function primaryOutput(node: GraphNodeSpec, update: AgentStateUpdate): JsonObjec
   }
   if (node.type === 'bull') return (update.bullTurn ?? {}) as JsonObject;
   if (node.type === 'bear') return (update.bearTurn ?? {}) as JsonObject;
+  if (node.type === 'fact_check') return (update.factCheck ?? {}) as JsonObject;
   if (node.type === 'planner') return (update.proposal ?? {}) as JsonObject;
   if (node.type === 'risk_aggressive' || node.type === 'risk_conservative' || node.type === 'risk_neutral') {
     const risk = update.risk as RiskDebateState | undefined;

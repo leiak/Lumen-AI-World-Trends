@@ -120,8 +120,22 @@ export function buildDebatePrompt(
   maxRounds: number,
   systemOverride?: string
 ): ChatMessage[] {
-  const role = stance === 'bull' ? '多头研究员' : '空头研究员';
-  const stanceText = stance === 'bull' ? '看多（趋势延续/升温）' : '看空（趋势反转/噪声）';
+  const role =
+    subject.kind === 'stock'
+      ? stance === 'bull'
+        ? '涨因研究员'
+        : '跌因研究员'
+      : stance === 'bull'
+        ? '多头研究员'
+        : '空头研究员';
+  const stanceText =
+    subject.kind === 'stock'
+      ? stance === 'bull'
+        ? '看多（存在可验证的上涨归因）'
+        : '看空（存在可验证的下跌归因）'
+      : stance === 'bull'
+        ? '看多（趋势延续/升温）'
+        : '看空（趋势反转/噪声）';
   const evidenceText = reports
     .map((r) => `- [${r.dimension}] ${r.summary}（置信度 ${r.confidence}，缺口: ${r.dataGaps.join('; ') || '无'}）`)
     .join('\n');
@@ -137,6 +151,9 @@ export function buildDebatePrompt(
         `你是「${role}」，立场固定为${stanceText}，不得中立。`,
         UNTRUSTED_RULE,
         '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
+        subject.kind === 'stock'
+          ? '股票分析：每个量化数字都必须来自取证报告，并在数字后标注 [fact:<fact_id>]；缺失维度不得编造。'
+          : '不得把缺失当作“没有发生”。',
         '这是计数制辩论：轮次由系统控制，你只需完成本次发言，不要声称“辩论结束”。',
         '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
         `{"stance":"${stance}","argument":"不超过250字","rebuttals":[{"target":"","point":""}],"evidenceRefs":["sourceId"],"confidence":0到1}`
@@ -265,6 +282,47 @@ export function buildPlannerPrompt(
     `【多空辩论】\n${debateText || '- 无'}`,
     `【三方风控】\n${riskText || '- 无'}`,
     `要求：triggers 不超过 ${maxTriggers} 条且必须可观测；invalidations 必须能推翻结论；reviewInDays 与 horizon 对齐。`
+  ].join('\n\n');
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: user }
+  ];
+}
+
+export function buildStockJudgePrompt(
+  subject: AgentSubject,
+  asOf: string,
+  reports: EvidenceReport[],
+  debate: DebateEntry[],
+  memoryContext?: string,
+  systemOverride?: string
+): ChatMessage[] {
+  const evidenceText = reports
+    .map((r) => `- [${r.dimension}] ${r.summary}（置信度 ${r.confidence}，缺口: ${r.dataGaps.join('; ') || '无'}）`)
+    .join('\n');
+  const vars: PromptRenderVars = { subject, asOf, memoryContext, evidenceSummary: evidenceText };
+  const system = systemOverride
+    ? composeCustomSystem('judge', systemOverride, vars)
+    : [
+        '你是「股票裁决者」，负责对 A 股标的的涨跌方向做裁决，并给出结构化归因分解。',
+        UNTRUSTED_RULE,
+        '只使用取证报告中的本地事实；每个量化数字都必须能在事实表中匹配，并在数字后标注 [fact:<fact_id>]。',
+        '缺失的维度必须写入 stock.missingLayers，不得把缺失当作“没有发生”，也不得编造数据。',
+        '不做交易指令、不给仓位、不承诺收益。',
+        '评级枚举：strong_up | up | neutral | down | strong_down | review。证据不足时用 review。',
+        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+        '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选",' +
+          '"stock":{"factors":[{"id":"earnings_surprise|guidance_change|event_driven|sector_market_beta|liquidity_sentiment","label":"","layer":"market|fundamentals|disclosures|news","contribution":"positive|negative|neutral","weight":0到1,"mechanism":"","factIds":["fact_id"]}],' +
+          '"missingLayers":["market|fundamentals|disclosures|news"],"assumptions":[""],"magnitude":"small|medium|large","benchmarkSymbol":"sh000300","referencedFactIds":["fact_id"]}}'
+      ].join('\n');
+  const history = debate.map((e) => `- ${debateEntryText(e)}`).join('\n');
+  const user = [
+    subjectLine(subject),
+    `时间边界 asOf=${asOf}`,
+    ...memorySegment(memoryContext),
+    `【四维取证（本地事实，可信）】\n${evidenceText || '- 无'}`,
+    `【多空辩论】\n${history || '- 无'}`,
+    '要求：给出唯一评级；stock.factors 至少 1 条且每条都带 factIds；thesis 中的数字必须附带 [fact:id]；缺失维度写入 missingLayers。'
   ].join('\n\n');
   return [
     { role: 'system', content: system },

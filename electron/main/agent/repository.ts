@@ -254,7 +254,10 @@ export function parseSuspendSnapshot(raw: unknown): RunSuspendSnapshot | null {
   if (
     typeof subject.key !== 'string' ||
     typeof subject.label !== 'string' ||
-    (subject.kind !== 'topic' && subject.kind !== 'country' && subject.kind !== 'event')
+    (subject.kind !== 'topic' &&
+      subject.kind !== 'country' &&
+      subject.kind !== 'event' &&
+      subject.kind !== 'stock')
   ) {
     return null;
   }
@@ -343,7 +346,7 @@ export interface AgentRepository {
   startNode(rec: NodeStartRecord): void;
   finishNode(rec: NodeFinishRecord): void;
   saveDecision(runId: string, subject: AgentSubject, asOf: string, decision: FinalDecision): void;
-  listRuns(limit?: number): AgentRunSummary[];
+  listRuns(limit?: number, graphId?: string): AgentRunSummary[];
   getRunDetail(runId: string): AgentRunDetail | null;
   /** P5：进程启动清理。有合法挂起快照的 interrupted 保留可恢复，其余标记失败。 */
   recoverPreviousProcessRuns(at: string): { recoverable: number; failed: number };
@@ -834,9 +837,14 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       persist();
     },
 
-    listRuns(limit = 50) {
+    listRuns(limit = 50, graphId?: string) {
       const n = Math.min(Math.max(limit, 1), 200);
-      return rows(db, 'SELECT * FROM agent_run ORDER BY started_at DESC LIMIT ?', [n]).map(toSummary);
+      return graphId
+        ? rows(db, 'SELECT * FROM agent_run WHERE graph_id = ? ORDER BY started_at DESC LIMIT ?', [
+            graphId,
+            n
+          ]).map(toSummary)
+        : rows(db, 'SELECT * FROM agent_run ORDER BY started_at DESC LIMIT ?', [n]).map(toSummary);
     },
 
     getRunDetail(runId) {

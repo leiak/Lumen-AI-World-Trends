@@ -36,8 +36,9 @@ describe('database', () => {
     const row = stmt.getAsObject() as { value: string };
     stmt.free();
     expect(has).toBe(true);
-    // P7：schema 从 v15 升到 v16（新增 checkpoint 表与 recovery_json 列）。
-    expect(row.value).toBe('16');
+    // P7：schema 16 新增 checkpoint 表与 recovery_json 列。
+    // M26：v17 追加 stock_fact 表，并重建 agent_run 以放开 subject_kind='stock'（追加式，不改旧列）。
+    expect(row.value).toBe('17');
     // P4：图草稿/发布状态、spec 摘要与 run 绑定摘要。
     const graphCols = db.exec(`PRAGMA table_info(agent_graph)`);
     const gcols = graphCols[0] ? graphCols[0].values.map((r) => r[1] as string) : [];

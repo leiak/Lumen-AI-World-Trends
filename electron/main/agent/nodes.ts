@@ -15,6 +15,10 @@ import type { ChatMessage } from '../ai/provider.js';
 import type { SourceArticle } from '../../../shared/models.js';
 import { computeTrends } from '../trends/engine.js';
 import { listByHot } from '../graph/repository.js';
+import { computeLayerStatus, listStockFacts } from '../stocks/facts.js';
+import { STOCK_DEFAULT_BENCHMARK, STOCK_LAYER_LABELS } from '../../../shared/stock-agent.js';
+import type { StockFact, StockFactLayer } from '../../../shared/stock-agent.js';
+import { checkDecisionNumbers } from './fact-check.js';
 import type { AgentState, AgentStateUpdate } from './state.js';
 import { loadMemoryContext } from './memory.js';
 import {
@@ -23,7 +27,8 @@ import {
   buildFinalPrompt,
   buildJudgePrompt,
   buildPlannerPrompt,
-  buildRiskPrompt
+  buildRiskPrompt,
+  buildStockJudgePrompt
 } from './prompts.js';
 import { debateRound, riskRound } from './routes.js';
 import {
@@ -35,6 +40,7 @@ import {
   parseFinalDecision,
   parseObservationPlan,
   parseRiskTurn,
+  parseStockDecision,
   planFromDecision,
   reviewDecision
 } from './structured.js';
@@ -66,6 +72,137 @@ function reportsOf(state: AgentState) {
   return Object.values(state.evidenceBundle ?? {});
 }
 
+const STOCK_DIMENSIONS = new Set<StockFactLayer>(['market', 'fundamentals', 'disclosures', 'news']);
+
+function stockSymbolOf(subjectKey: string): string {
+  return subjectKey.includes(':') ? subjectKey.slice(subjectKey.indexOf(':') + 1) : subjectKey;
+}
+
+function fmtValue(f: StockFact): string {
+  if (typeof f.value === 'number') return `${f.value}${f.unit ?? ''}`;
+  return f.valueText ?? '';
+}
+
+/** M26：股票取证是确定性的，只读 stock_fact（严格 asOf 截断），不调用模型。
+ *  缺失维度必须写成 dataGaps，不能把缺失当成“没有发生”。 */
+function runStockEvidence(
+  state: AgentState,
+  node: GraphNodeSpec,
+  deps: AgentNodeDeps
+): AgentStateUpdate {
+  if (node.config.type !== 'evidence') return {};
+  const dimension = node.config.dimension as StockFactLayer;
+  if (!STOCK_DIMENSIONS.has(dimension)) return {};
+  deps.checkCanceled();
+  const asOf = state.asOf || deps.asOf;
+  const symbol = stockSymbolOf(state.subject.key);
+  const facts = listStockFacts(deps.db, symbol, asOf);
+  const status = computeLayerStatus(facts).find((s) => s.layer === dimension);
+  const layerFacts = facts.filter((f) => f.layer === dimension);
+
+  if (layerFacts.length === 0) {
+    const gaps = status?.gaps ?? [`${STOCK_LAYER_LABELS[dimension]}维度缺失`];
+    return {
+      evidenceBundle: {
+        [dimension]: {
+          dimension,
+          summary: `该维度缺失：${STOCK_LAYER_LABELS[dimension]}（本地事实表中没有 ${symbol} 在 asOf 之前的数据）`,
+          signals: [],
+          dataGaps: gaps,
+          confidence: 0
+        }
+      }
+    };
+  }
+
+  const signals: Array<{
+    claim: string;
+    direction: 'up' | 'down' | 'flat';
+    strength: 1 | 2 | 3;
+    sourceIds: string[];
+  }> = [];
+  let summary = '';
+  let direction: 'up' | 'down' | 'flat' = 'flat';
+  let confidence = 0.5;
+
+  if (dimension === 'market') {
+    const last = layerFacts[layerFacts.length - 1];
+    const prev = layerFacts.length > 1 ? layerFacts[layerFacts.length - 2] : null;
+    if (prev && typeof last.value === 'number' && typeof prev.value === 'number') {
+      direction = last.value > prev.value ? 'up' : last.value < prev.value ? 'down' : 'flat';
+    }
+    summary = `最新收盘价 ${fmtValue(last)} [fact:${last.factId}]；样本覆盖${layerFacts.length >= 2 ? '完整' : '不足'}；相对基准 ${STOCK_DEFAULT_BENCHMARK} 的超额收益由结算层按 T+5 交易日计算。`;
+    signals.push({
+      claim: `最近收盘价 ${fmtValue(last)}（${prev ? '较前一交易日' : '首条样本'}）`,
+      direction,
+      strength: 2,
+      sourceIds: [last.factId]
+    });
+    confidence = layerFacts.length >= 2 ? 0.7 : 0.4;
+  } else if (dimension === 'fundamentals') {
+    const latest = new Map<string, StockFact>();
+    for (const f of layerFacts) latest.set(f.metric, f);
+    const parts: string[] = [];
+    for (const f of latest.values()) parts.push(`${f.metric} ${fmtValue(f)} [fact:${f.factId}]`);
+    const profit = latest.get('net_profit_yoy');
+    const rev = latest.get('revenue_yoy');
+    const pv = typeof profit?.value === 'number' ? profit.value : null;
+    const rv = typeof rev?.value === 'number' ? rev.value : null;
+    direction = (pv ?? rv ?? 0) > 0 ? 'up' : (pv ?? rv ?? 0) < 0 ? 'down' : 'flat';
+    summary = `本地财报表述：${parts.join('；')}；报告期 ${[...latest.values()][0]?.period ?? '未知'}。`;
+    for (const f of latest.values()) {
+      signals.push({
+        claim: `${f.metric} ${fmtValue(f)}`,
+        direction: typeof f.value === 'number' ? (f.value > 0 ? 'up' : f.value < 0 ? 'down' : 'flat') : 'flat',
+        strength: 3,
+        sourceIds: [f.factId]
+      });
+    }
+    confidence = 0.75;
+  } else if (dimension === 'disclosures') {
+    const texts = layerFacts.map((f) => f.valueText ?? f.metric).filter(Boolean);
+    summary = `公告/披露样本：${texts.join('；')}（来源 ${layerFacts[0].source}）。`;
+    for (const f of layerFacts) {
+      signals.push({
+        claim: f.valueText ?? f.metric,
+        direction: 'flat',
+        strength: 2,
+        sourceIds: [f.factId]
+      });
+    }
+    confidence = 0.65;
+  } else {
+    const latest = new Map<string, StockFact>();
+    for (const f of layerFacts) latest.set(f.metric, f);
+    const parts = [...latest.values()].map((f) => `${f.metric} ${fmtValue(f)} [fact:${f.factId}]`);
+    const sentiment = latest.get('sentiment_score');
+    const sv = typeof sentiment?.value === 'number' ? sentiment.value : null;
+    direction = sv === null ? 'flat' : sv > 0.1 ? 'up' : sv < -0.1 ? 'down' : 'flat';
+    summary = `本地舆情表述：${parts.join('；')}。`;
+    for (const f of latest.values()) {
+      signals.push({
+        claim: `${f.metric} ${fmtValue(f)}`,
+        direction,
+        strength: 2,
+        sourceIds: [f.factId]
+      });
+    }
+    confidence = 0.6;
+  }
+
+  return {
+    evidenceBundle: {
+      [dimension]: {
+        dimension,
+        summary,
+        signals,
+        dataGaps: status?.gaps ?? [],
+        confidence
+      }
+    }
+  };
+}
+
 /** P3：memory 节点只读 agent_memory，按时间正确性过滤（resolved_at/as_of 均不得晚于 asOf）。 */
 async function runMemory(
   state: AgentState,
@@ -93,6 +230,10 @@ async function runEvidence(
   if (node.config.type !== 'evidence') return {};
   const cfg = node.config;
   const dimension: EvidenceDimension = cfg.dimension;
+  // M26：股票维度走确定性取证，不调用模型，也不影响世界趋势（heat/sentiment/...）。
+  if (STOCK_DIMENSIONS.has(dimension as StockFactLayer)) {
+    return runStockEvidence(state, node, deps);
+  }
   deps.checkCanceled();
   const asOf = state.asOf || deps.asOf;
   const trends = computeTrends(deps.db, {
@@ -183,6 +324,34 @@ async function runDebate(
 
 async function runJudge(state: AgentState, deps: AgentNodeDeps): Promise<AgentStateUpdate> {
   deps.checkCanceled();
+  if (state.subject.kind === 'stock') {
+    const messages = buildStockJudgePrompt(
+      state.subject,
+      state.asOf,
+      reportsOf(state),
+      state.debate?.entries ?? [],
+      state.memoryContext,
+      deps.prompts?.judge
+    );
+    const { value } = await generateStructured(
+      deps.generate,
+      messages,
+      parseStockDecision,
+      '上一次输出不是合法 JSON、评级不在枚举内或 stock 归因不合法。请只输出符合 schema 的单个 JSON 对象；无法判断时 rating 用 review。'
+    );
+    const parsed = value ?? reviewDecision(5, new Date(), 'structured_output_failed');
+    // 缺失维度必须显式降级：有维度缺失时不得给出方向性评级（设计 §4.6 / §10 验收）。
+    const decision =
+      parsed.rating !== 'review' && (parsed.stock?.missingLayers.length ?? 0) > 0
+        ? {
+            ...parsed,
+            rating: 'review' as const,
+            reviewRequired: true,
+            reviewReason: 'missing_dimension'
+          }
+        : parsed;
+    return { decision, plan: planFromDecision(decision) };
+  }
   const messages = buildJudgePrompt(
     state.subject,
     state.asOf,
@@ -318,12 +487,14 @@ async function runFinal(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
   // 裁决已判定需要人工复核时，final 不得把 review 洗成方向性评级。
   if (base.rating === 'review') {
     return {
-      decision: reviewDecision(
-        base.horizonDays,
-        new Date(),
-        base.reviewReason ?? 'judge_review'
-      )
+      decision: state.subject.kind === 'stock'
+        ? { ...base, rating: 'review', reviewRequired: true, reviewReason: base.reviewReason ?? 'judge_review' }
+        : reviewDecision(base.horizonDays, new Date(), base.reviewReason ?? 'judge_review')
     };
+  }
+  // M26：股票结论已经过数字闸门，final 只签署，不再让模型改写数字。
+  if (state.subject.kind === 'stock') {
+    return { decision: base };
   }
   const messages = buildFinalPrompt(
     state.subject,
@@ -346,12 +517,49 @@ async function runFinal(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
   return { decision };
 }
 
+/** M26：数字闸门。裁决叙事中无法在本地事实表匹配的数字，强制 review。 */
+async function runFactCheck(
+  state: AgentState,
+  node: GraphNodeSpec,
+  deps: AgentNodeDeps
+): Promise<AgentStateUpdate> {
+  if (node.config.type !== 'fact_check') return {};
+  deps.checkCanceled();
+  const toleranceBps = node.config.toleranceBps;
+  const decision = state.decision;
+  if (!decision) {
+    return {
+      factCheck: {
+        ok: false,
+        checkedNumbers: [],
+        unverifiedNumbers: [],
+        referencedFactIds: [],
+        toleranceBps,
+        reason: '裁决缺失，无法核查'
+      }
+    };
+  }
+  const facts = listStockFacts(deps.db, stockSymbolOf(state.subject.key), state.asOf || deps.asOf);
+  // 即使裁决已因缺失维度要求复核，数字闸门仍要独立跑一次：
+  // 编造数字必须优先标记为 unverified_number（P0 硬要求）。
+  const result = checkDecisionNumbers(decision, facts, toleranceBps);
+  if (result.unverifiedNumbers.length === 0) return { factCheck: result };
+  const gated = {
+    ...decision,
+    rating: 'review' as const,
+    reviewRequired: true,
+    reviewReason: 'unverified_number'
+  };
+  return { factCheck: result, decision: gated, plan: planFromDecision(gated) };
+}
+
 export const nodeImplementations: Record<AgentNodeType, NodeImplementation> = {
   memory: runMemory,
   evidence: runEvidence,
   bull: (state, node, deps) => runDebate(state, node, 'bull', deps),
   bear: (state, node, deps) => runDebate(state, node, 'bear', deps),
   judge: (state, _node, deps) => runJudge(state, deps),
+  fact_check: (state, node, deps) => runFactCheck(state, node, deps),
   planner: (state, node, deps) => runPlanner(state, node, deps),
   risk_aggressive: (state, node, deps) => {
     const stance = riskStanceOf(node.type);

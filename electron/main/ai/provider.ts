@@ -125,7 +125,7 @@ export class MockProvider implements AiProvider {
         confidence: 0.55
       });
     }
-    if (system.includes('多头研究员')) {
+    if (system.includes('多头研究员') || system.includes('涨因研究员')) {
       return JSON.stringify({
         stance: 'bull',
         argument: `[Mock 第${round}轮] 恒温与持续性指标同步抬升，热度扩散到多个来源，短期动量具备延续性。`,
@@ -134,13 +134,97 @@ export class MockProvider implements AiProvider {
         confidence: 0.6
       });
     }
-    if (system.includes('空头研究员')) {
+    if (system.includes('空头研究员') || system.includes('跌因研究员')) {
       return JSON.stringify({
         stance: 'bear',
         argument: `[Mock 第${round}轮] 热度上升主要由单一事件脉冲驱动，缺乏持续性证据，回撤风险偏高。`,
         rebuttals: [{ target: '动量延续', point: '窗口内已出现边际衰减，延续性存疑。' }],
         evidenceRefs: [],
         confidence: 0.5
+      });
+    }
+    if (system.includes('裁决者') && (system.includes('股票') || system.includes('归因分解'))) {
+      // M26：股票裁决 Mock —— 只引用取证报告里真实出现过的 [fact:id] 与数字，
+      // 保证离线环境也能通过数字闸门；没有可引用事实时降级为 review。
+      const cites = [...user.matchAll(/([-+]?\d+(?:\.\d+)?)[^\[]{0,30}\[fact:([^\]]+)\]/g)]
+        .slice(0, 4)
+        .map((m) => ({ num: m[1], factId: m[2] }));
+      const missingLayers = (['market', 'fundamentals', 'disclosures', 'news'] as const).filter((l) =>
+        new RegExp(`\\[${l}\\] 该维度缺失`).test(user)
+      );
+      const layerOf = (factId: string): 'market' | 'fundamentals' | 'disclosures' | 'news' => {
+        if (factId.includes('_fundamentals_')) return 'fundamentals';
+        if (factId.includes('_disclosures_')) return 'disclosures';
+        if (factId.includes('_news_')) return 'news';
+        return 'market';
+      };
+      const factorIdOf = (layer: string): string =>
+        layer === 'fundamentals'
+          ? 'earnings_surprise'
+          : layer === 'disclosures'
+            ? 'event_driven'
+            : layer === 'news'
+              ? 'liquidity_sentiment'
+              : 'sector_market_beta';
+      if (cites.length === 0) {
+        return JSON.stringify({
+          rating: 'review',
+          confidence: 0.2,
+          horizonDays: 5,
+          thesis: '本地事实表没有可在 asOf 之前引用的数据，无法给出方向性结论。',
+          keyRisks: ['缺少可核验的事实数据'],
+          nextCheckAt: nextCheck,
+          reviewRequired: true,
+          reviewReason: 'insufficient_facts',
+          stock: {
+            factors: [
+              {
+                id: 'sector_market_beta',
+                label: '板块/市场 Beta',
+                layer: 'market',
+                contribution: 'neutral',
+                weight: 1,
+                mechanism: '行情事实缺失',
+                factIds: []
+              }
+            ],
+            missingLayers: ['market', 'fundamentals', 'disclosures', 'news'],
+            assumptions: ['需要先导入本地事实数据'],
+            magnitude: 'small',
+            benchmarkSymbol: 'sh000300',
+            referencedFactIds: []
+          }
+        });
+      }
+      const factors = cites.map((c) => {
+        const layer = layerOf(c.factId);
+        return {
+          id: factorIdOf(layer),
+          label: layer === 'market' ? '板块/市场 Beta' : layer === 'fundamentals' ? '业绩超预期' : layer === 'disclosures' ? '事件驱动' : '流动性/情绪',
+          layer,
+          contribution: 'positive',
+          weight: 1 / cites.length,
+          mechanism: `${c.num} 来自本地事实 [fact:${c.factId}]`,
+          factIds: [c.factId]
+        };
+      });
+      const cited = cites.map((c) => `${c.num} [fact:${c.factId}]`).join('，');
+      return JSON.stringify({
+        rating: 'up',
+        confidence: 0.58,
+        horizonDays: 5,
+        thesis: `综合四维取证与多空辩论，方向偏多：本地事实显示 ${cited}；缺失维度已显式标注，未做外推。`,
+        keyRisks: ['样本窗口有限', '缺失维度可能影响归因完整性'],
+        nextCheckAt: nextCheck,
+        reviewRequired: false,
+        stock: {
+          factors,
+          missingLayers,
+          assumptions: ['仅使用 asOf 之前的本地事实', '未接入财报/公告爬虫时以显式缺失处理'],
+          magnitude: 'medium',
+          benchmarkSymbol: 'sh000300',
+          referencedFactIds: cites.map((c) => c.factId)
+        }
       });
     }
     if (system.includes('裁决者')) {

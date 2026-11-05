@@ -122,7 +122,11 @@ function validateConfig(type: AgentNodeType, raw: unknown): NodeConfig | null {
       dim !== 'heat' &&
       dim !== 'sentiment' &&
       dim !== 'geopolitics' &&
-      dim !== 'structure'
+      dim !== 'structure' &&
+      dim !== 'market' &&
+      dim !== 'fundamentals' &&
+      dim !== 'disclosures' &&
+      dim !== 'news'
     ) {
       return null;
     }
@@ -140,6 +144,12 @@ function validateConfig(type: AgentNodeType, raw: unknown): NodeConfig | null {
     if (hasUnknownKeys(raw, allowed)) return null;
     if (raw.requireDirection !== true) return null;
     return { type: 'judge', requireDirection: true };
+  }
+  if (type === 'fact_check') {
+    const allowed = new Set(['type', 'toleranceBps']);
+    if (hasUnknownKeys(raw, allowed)) return null;
+    if (!asInt(raw.toleranceBps, 0, 5000)) return null;
+    return { type: 'fact_check', toleranceBps: raw.toleranceBps as number };
   }
   if (type === 'planner') {
     const allowed = new Set(['type', 'maxTriggers']);
@@ -533,6 +543,11 @@ export function validateGraphSpec(raw: unknown): SpecValidation {
   const finals = byType.get('final') ?? [];
   if (planner.length > 1) {
     return fail('E_GRAPH_INVALID', 'planner 节点最多 1 个', { nodeId: planner[1].id });
+  }
+  // M26：数字闸门最多 1 个；世界趋势默认图不含该节点，校验行为不变。
+  const factChecks = byType.get('fact_check') ?? [];
+  if (factChecks.length > 1) {
+    return fail('E_GRAPH_INVALID', 'fact_check 节点最多 1 个', { nodeId: factChecks[1].id });
   }
   if (finals.length !== 1) {
     return fail('E_GRAPH_INVALID', '必须且只能有 1 个 final 节点', {
@@ -953,6 +968,172 @@ export function defaultGraphSpec(now = new Date().toISOString()): GraphSpec {
     ],
     settings: {
       maxDebateRounds: 2,
+      maxRiskRounds: 1,
+      maxToolRounds: 0,
+      recursionLimit: 40,
+      nodeTimeoutMs: 90000,
+      runTimeoutMs: 600000,
+      maxCostUsd: 0.3,
+      maxNodes: 32
+    }
+  };
+}
+
+/** M26 股票分析默认图 v1（独立 graph id，独立版本序列）。
+ *  顺序按产品要求：历史记忆注入 → 行情取证 → 财报取证 → 公告取证 → 舆情取证
+ *  → 涨因/跌因辩论 → 裁决 → 事实核查（数字闸门）→ 观察方案 → 三方风控 → 人工审批。
+ *  世界趋势默认图（trend-analysis v4）不引用本函数，行为不变。 */
+export function stockGraphSpec(now = new Date().toISOString()): GraphSpec {
+  const riskOrder = ['risk_aggressive', 'risk_conservative', 'risk_neutral'];
+  const evidenceNode = (
+    id: string,
+    label: string,
+    dimension: 'market' | 'fundamentals' | 'disclosures' | 'news',
+    x: number
+  ): GraphNodeSpec => ({
+    id,
+    type: 'evidence',
+    label,
+    position: { x, y: 220 },
+    config: { type: 'evidence', dimension, topN: 10, windowDays: 30 }
+  });
+  return {
+    specVersion: 1,
+    id: 'stock-analysis',
+    version: 1,
+    name: '股票 AI 分析',
+    description: '行情/财报/公告/舆情取证 → 涨因跌因辩论 → 裁决 → 事实核查（数字闸门）→ 观察方案 → 三方风控 → 审批',
+    createdAt: now,
+    updatedAt: now,
+    nodes: [
+      {
+        id: 'memory',
+        type: 'memory',
+        label: '历史教训',
+        position: { x: 40, y: 220 },
+        config: { type: 'memory', lookbackDays: 180, maxLessons: 5 }
+      },
+      evidenceNode('market', '行情取证', 'market', 260),
+      evidenceNode('fundamentals', '财报取证', 'fundamentals', 460),
+      evidenceNode('disclosures', '公告取证', 'disclosures', 660),
+      evidenceNode('news', '舆情取证', 'news', 860),
+      {
+        id: 'bull',
+        type: 'bull',
+        label: '涨因研究员',
+        position: { x: 1080, y: 80 },
+        joinMode: 'any',
+        config: { type: 'bull', maxRounds: 1 }
+      },
+      {
+        id: 'bear',
+        type: 'bear',
+        label: '跌因研究员',
+        position: { x: 1080, y: 360 },
+        joinMode: 'any',
+        config: { type: 'bear', maxRounds: 1 }
+      },
+      {
+        id: 'judge',
+        type: 'judge',
+        label: '裁决者',
+        position: { x: 1300, y: 220 },
+        joinMode: 'any',
+        config: { type: 'judge', requireDirection: true }
+      },
+      {
+        id: 'fact_check',
+        type: 'fact_check',
+        label: '事实核查（数字闸门）',
+        position: { x: 1520, y: 220 },
+        joinMode: 'all',
+        config: { type: 'fact_check', toleranceBps: 50 }
+      },
+      {
+        id: 'planner',
+        type: 'planner',
+        label: '观察方案',
+        position: { x: 1740, y: 220 },
+        joinMode: 'all',
+        config: { type: 'planner', maxTriggers: 4 }
+      },
+      {
+        id: 'risk_aggressive',
+        type: 'risk_aggressive',
+        label: '激进风控',
+        position: { x: 1960, y: 60 },
+        joinMode: 'any',
+        config: { type: 'risk_aggressive', maxRounds: 1 }
+      },
+      {
+        id: 'risk_conservative',
+        type: 'risk_conservative',
+        label: '保守风控',
+        position: { x: 1960, y: 220 },
+        joinMode: 'any',
+        config: { type: 'risk_conservative', maxRounds: 1 }
+      },
+      {
+        id: 'risk_neutral',
+        type: 'risk_neutral',
+        label: '中性风控',
+        position: { x: 1960, y: 380 },
+        joinMode: 'any',
+        config: { type: 'risk_neutral', maxRounds: 1 }
+      },
+      {
+        id: 'final',
+        type: 'final',
+        label: '最终结论',
+        position: { x: 2200, y: 220 },
+        joinMode: 'all',
+        config: { type: 'final', requireApproval: true }
+      }
+    ],
+    edges: [
+      { id: 'e-start-memory', source: '__start__', target: 'memory' },
+      { id: 'e-memory-market', source: 'memory', target: 'market' },
+      { id: 'e-market-fundamentals', source: 'market', target: 'fundamentals' },
+      { id: 'e-fundamentals-disclosures', source: 'fundamentals', target: 'disclosures' },
+      { id: 'e-disclosures-news', source: 'disclosures', target: 'news' },
+      { id: 'e-news-bull', source: 'news', target: 'bull' },
+      {
+        id: 'e-bull-bear',
+        source: 'bull',
+        target: 'bear',
+        condition: { kind: 'debate_rounds', maxRounds: 1, whenDone: 'judge' }
+      },
+      {
+        id: 'e-bear-bull',
+        source: 'bear',
+        target: 'bull',
+        condition: { kind: 'debate_rounds', maxRounds: 1, whenDone: 'judge' }
+      },
+      { id: 'e-judge-fact-check', source: 'judge', target: 'fact_check' },
+      { id: 'e-fact-check-planner', source: 'fact_check', target: 'planner' },
+      { id: 'e-planner-risk', source: 'planner', target: 'risk_aggressive' },
+      {
+        id: 'e-risk-agg-cons',
+        source: 'risk_aggressive',
+        target: 'risk_conservative',
+        condition: { kind: 'risk_rounds', maxRounds: 1, order: riskOrder, whenDone: 'final' }
+      },
+      {
+        id: 'e-risk-cons-neu',
+        source: 'risk_conservative',
+        target: 'risk_neutral',
+        condition: { kind: 'risk_rounds', maxRounds: 1, order: riskOrder, whenDone: 'final' }
+      },
+      {
+        id: 'e-risk-neu-agg',
+        source: 'risk_neutral',
+        target: 'risk_aggressive',
+        condition: { kind: 'risk_rounds', maxRounds: 1, order: riskOrder, whenDone: 'final' }
+      },
+      { id: 'e-final-end', source: 'final', target: '__end__' }
+    ],
+    settings: {
+      maxDebateRounds: 1,
       maxRiskRounds: 1,
       maxToolRounds: 0,
       recursionLimit: 40,

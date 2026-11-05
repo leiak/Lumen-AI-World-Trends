@@ -575,3 +575,42 @@ button.agent-editor-locate:hover { border-color: var(--accent-2); }
   .agent-workbench { grid-template-columns: 1fr; }
   .agent-run-row { grid-template-columns: 1fr; justify-items: start; }
 }
+
+/* M26 股票 AI 分析页签 */
+.stock-factor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  background: var(--bg-card);
+}
+.stock-factor-contrib {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 6px;
+  margin-right: 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+.stock-factor-contrib.positive { color: #16a34a; border-color: #16a34a55; }
+.stock-factor-contrib.negative { color: #dc2626; border-color: #dc262655; }
+.stock-factor-contrib.neutral { color: var(--text-muted, #888); }
+.stock-fact-ids code {
+  margin-right: 6px;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-hover, #f4f4f4);
+}
+.stock-layer-ok { color: #16a34a; }
+.stock-layer-partial { color: #d97706; }
+.stock-layer-missing { color: #dc2626; font-weight: 600; }
+.stock-layer-row {
+  display: grid;
+  grid-template-columns: 120px 80px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.additional-note { color: var(--text-muted, #888); }
