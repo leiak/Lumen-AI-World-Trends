@@ -505,6 +505,19 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
     expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
   });
 
+  it('空/空白 graphId 不会静默落到 trend-analysis', () => {
+    const runtime = makeRuntime(newDb(), new MockProvider());
+    for (const graphId of ['', '   ', null as unknown as string]) {
+      const get = runtime.getPrompts({ graphId });
+      expect(get.ok).toBe(false);
+      if (!get.ok) expect(get.code).toBe('E_VALIDATION');
+      const save = runtime.savePrompts({ graphId, prompts: { final: 'X' } });
+      expect(save.ok).toBe(false);
+      if (!save.ok) expect(save.code).toBe('E_VALIDATION');
+    }
+    expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
+  });
+
   it('股票 run 绑定股票 active 包；改股票 prompt 后旧 run 回放仍用启动时快照', async () => {
     const db = newDb();
     importSample(db);
@@ -532,10 +545,29 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
     expect(packB.version).toBeGreaterThan(packA.version);
 
     const replay = expectOk(runtime.getRun(started.runId));
+    expect(replay.status).toBe('interrupted');
     expect(replay.prompt?.version).toBe(packA.version);
     expect(replay.prompt?.digest).toBe(packA.digest);
     expect(replay.prompt?.prompts.evidence).toContain('STOCK-A');
     expect(replay.prompt?.prompts.evidence).not.toContain('STOCK-B');
+
+    // 审批恢复仍用运行启动时的快照，不被中途编辑影响。
+    expectOk(
+      await runtime.resumeRun({ runId: started.runId, resolution: { type: 'approve' } })
+    );
+    await runtime.waitForRun(started.runId);
+    const done = expectOk(runtime.getRun(started.runId));
+    expect(done.status).toBe('completed');
+    expect(done.prompt?.version).toBe(packA.version);
+    expect(done.prompt?.prompts.evidence).toContain('STOCK-A');
+    expect(done.prompt?.prompts.evidence).not.toContain('STOCK-B');
+
+    // 新 run 才绑定当前 active（STOCK-B）。
+    const started2 = expectOk(await runtime.startRun(request()));
+    await runtime.waitForRun(started2.runId);
+    const next = expectOk(runtime.getRun(started2.runId));
+    expect(next.prompt?.version).toBe(packB.version);
+    expect(next.prompt?.prompts.evidence).toContain('STOCK-B');
 
     // 智能体页签的 active 包始终未被污染。
     expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);

@@ -968,6 +968,7 @@ async function main() {
     const TREND_DIGEST =
       '93e039e96961e019373ddb867419ea637c20d278cbc0538bddef73c3e48bb642';
     const { app, page } = await launch(dirI, 80);
+    let stockSavedVersion = 0;
     try {
       await page.click('[data-testid="nav-stock-agent"]');
       await page.waitForSelector('[data-testid="stock-start"]', { timeout: 20000 });
@@ -1024,6 +1025,9 @@ async function main() {
         stockStartVersion,
         { timeout: 20000, polling: 25 }
       );
+      stockSavedVersion = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
       await page.click('[data-testid="agent-prompt-close"]');
 
       // 回到智能体页签：默认图 v4 与 prompt 均未被股票编辑污染。
@@ -1045,6 +1049,22 @@ async function main() {
       );
       if (agentPromptScope !== 'trend-analysis' || agentPromptVersion !== 0) {
         throw new Error(`智能体 prompt 被污染：${agentPromptScope} v${agentPromptVersion}`);
+      }
+
+      // 再切回股票页签：fresh mount 仍必须落到 stock-analysis，且版本未被页面复用覆盖。
+      await page.click('[data-testid="nav-stock-agent"]');
+      await page.waitForSelector('[data-testid="stock-start"]', { timeout: 20000 });
+      await page.click('[data-testid="stock-prompt-toggle"]');
+      await page.waitForSelector('[data-testid="agent-prompt-editor"]', { timeout: 20000 });
+      const stockScopeAgain = await page.getAttribute(
+        '[data-testid="agent-prompt-editor"]',
+        'data-graph-id'
+      );
+      const stockVersionAgain = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
+      if (stockScopeAgain !== 'stock-analysis' || stockVersionAgain !== stockSavedVersion) {
+        throw new Error(`股票 prompt 页面状态串味：${stockScopeAgain} v${stockVersionAgain}`);
       }
     } finally {
       await closeApp(app);
@@ -1075,6 +1095,9 @@ async function main() {
       const pack = packRows[0];
       if (pack[0] !== 'stock-analysis' || Number(pack[2]) !== 1) {
         throw new Error(`prompt 包作用域/active 异常：${JSON.stringify(pack)}`);
+      }
+      if (Number(pack[1]) !== stockSavedVersion) {
+        throw new Error(`股票 prompt 版本落库不一致：v${pack[1]} vs UI v${stockSavedVersion}`);
       }
       if (!String(pack[3]).includes('E2E-STOCK-PROMPT')) {
         throw new Error('股票 prompt 未落库');

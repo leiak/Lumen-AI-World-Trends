@@ -30,6 +30,50 @@ describe('database', () => {
     expect(tables).toContain('article_entity');
   });
 
+  it('v17 → v18 追加式回填 prompt graph_id，且保持单一 active 包', async () => {
+    const SQL = await initSqlJs();
+    const old = new SQL.Database();
+    old.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO meta (key, value) VALUES ('schema_version', '17');
+      CREATE TABLE agent_prompt_pack (
+        version INTEGER PRIMARY KEY AUTOINCREMENT,
+        digest TEXT NOT NULL,
+        prompts_json TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    const insert = old.prepare(
+      `INSERT INTO agent_prompt_pack (digest, prompts_json, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    const now = '2026-01-01T00:00:00.000Z';
+    insert.run(['old-digest-1', '{}', 0, now, now]);
+    insert.run(['old-digest-2', '{"evidence":"old"}', 1, now, now]);
+    insert.free();
+
+    migrate(old);
+
+    const versionStmt = old.prepare(`SELECT value FROM meta WHERE key='schema_version'`);
+    versionStmt.step();
+    expect((versionStmt.getAsObject() as { value: string }).value).toBe('18');
+    versionStmt.free();
+
+    const cols = old.exec(`PRAGMA table_info(agent_prompt_pack)`)[0]?.values.map((r) => r[1]) ?? [];
+    expect(cols).toContain('graph_id');
+
+    const rows = old.exec(
+      `SELECT graph_id, is_active FROM agent_prompt_pack ORDER BY version`
+    )[0]?.values ?? [];
+    expect(rows).toEqual([
+      ['trend-analysis', 0],
+      ['trend-analysis', 1]
+    ]);
+    old.close();
+  });
+
   it('写入 schema_version = 16 且存在 agent_* 表与既有业务表', () => {
     const stmt = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`);
     const has = stmt.step();
