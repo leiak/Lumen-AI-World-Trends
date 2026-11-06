@@ -30,10 +30,10 @@ import { PROMPT_MAX_RENDERED_CHARS, PROMPT_MAX_SYSTEM_CHARS, PROMPT_PLACEHOLDERS
 import { inspectLatestCheckpoint } from './checkpoint.js';
 import { digestGraphSpec } from './spec.js';
 import {
-  DEFAULT_PROMPT_TEMPLATES,
   defaultPromptDigest,
   digestPromptOverrides,
-  normalizePromptOverrides
+  normalizePromptOverrides,
+  promptTemplatesForGraph
 } from './prompt-policy.js';
 
 type Row = Record<string, unknown>;
@@ -316,11 +316,11 @@ export interface AgentRepository {
   restoreDefaultGraph(spec: GraphSpec): AgentGraphRecord;
   countRunsForGraphVersion(graphId: string, version: number): number;
   /** P6：指定图命名空间下当前生效的 prompt 版本包；无覆盖时为版本 0 的内置默认。 */
-  getActivePromptPack(graphId?: string): AgentPromptPackView;
+  getActivePromptPack(graphId: string): AgentPromptPackView;
   /** P6：在指定图命名空间保存新的不可变 prompt 版本包；内容未变化时复用当前版本。 */
   savePromptPack(
     prompts: Partial<Record<AgentPromptRole, string>>,
-    graphId?: string
+    graphId: string
   ): AgentPromptPackView;
   insertRun(rec: RunInsert): void;
   updateRunTerminal(rec: RunTerminal): void;
@@ -360,7 +360,7 @@ export interface AgentRepository {
 export function createAgentRepository(db: Database, persist: () => void): AgentRepository {
   function promptPackViewFrom(row: Row | null | undefined, graphId: string): AgentPromptPackView {
     const base = {
-      defaults: DEFAULT_PROMPT_TEMPLATES,
+      defaults: promptTemplatesForGraph(graphId),
       limits: { maxSystemChars: PROMPT_MAX_SYSTEM_CHARS, maxRenderedChars: PROMPT_MAX_RENDERED_CHARS },
       placeholders: PROMPT_PLACEHOLDERS
     };
@@ -533,7 +533,7 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       return num(row?.n, 0);
     },
 
-    getActivePromptPack(graphId = 'trend-analysis') {
+    getActivePromptPack(graphId) {
       const row = one(
         db,
         'SELECT * FROM agent_prompt_pack WHERE graph_id = ? AND is_active = 1 ORDER BY version DESC LIMIT 1',
@@ -542,8 +542,8 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       return promptPackViewFrom(row, graphId);
     },
 
-    savePromptPack(prompts, graphId = 'trend-analysis') {
-      const normalized = normalizePromptOverrides(prompts);
+    savePromptPack(prompts, graphId) {
+      const normalized = normalizePromptOverrides(prompts, graphId);
       const digest = digestPromptOverrides(normalized);
       const current = one(
         db,

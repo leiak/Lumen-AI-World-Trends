@@ -139,22 +139,27 @@ describe('prompt 版本包与 run 绑定', () => {
     const runtime = makeRuntime(db, new MockProvider());
     runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
 
-    const initial = expectOk(runtime.getPrompts()).pack;
+    const initial = expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack;
     expect(initial.version).toBe(0);
     expect(initial.isDefault).toBe(true);
     expect(initial.prompts).toEqual({});
 
-    const v1 = expectOk(runtime.savePrompts({ prompts: { evidence: MARK_A } })).pack;
+    const v1 = expectOk(
+      runtime.savePrompts({ graphId: 'trend-analysis', prompts: { evidence: MARK_A } })
+    ).pack;
     expect(v1.version).toBe(1);
     expect(v1.isDefault).toBe(false);
     expect(v1.prompts.evidence).toBe(MARK_A);
     expect(v1.digest).not.toBe(initial.digest);
 
-    const same = expectOk(runtime.savePrompts({ prompts: { evidence: MARK_A } })).pack;
+    const same = expectOk(
+      runtime.savePrompts({ graphId: 'trend-analysis', prompts: { evidence: MARK_A } })
+    ).pack;
     expect(same.version).toBe(1);
     expect(same.digest).toBe(v1.digest);
 
     const invalid = runtime.savePrompts({
+      graphId: 'trend-analysis',
       prompts: { evidence: 'a'.repeat(801), bull: '{{env.ARK_API_KEY}}' }
     } as AgentPromptsSaveRequest);
     expect(invalid.ok).toBe(false);
@@ -164,10 +169,11 @@ describe('prompt 版本包与 run 绑定', () => {
       expect(issues.map((i) => i.role).sort()).toEqual(['bull', 'evidence']);
       expect(issues.every((i) => typeof i.offset === 'number')).toBe(true);
     }
-    const afterInvalid = expectOk(runtime.getPrompts()).pack;
+    const afterInvalid = expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack;
     expect(afterInvalid.version).toBe(1);
 
     const unknownRole = runtime.savePrompts({
+      graphId: 'trend-analysis',
       prompts: { oracle: 'x' }
     } as unknown as AgentPromptsSaveRequest);
     expect(unknownRole.ok).toBe(false);
@@ -188,7 +194,9 @@ describe('prompt 版本包与 run 绑定', () => {
     const runtime = makeRuntime(db, recording, ['run_prompt_a', 'run_prompt_b']);
     runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
 
-    const packA = expectOk(runtime.savePrompts({ prompts: { evidence: MARK_A } })).pack;
+    const packA = expectOk(
+      runtime.savePrompts({ graphId: 'trend-analysis', prompts: { evidence: MARK_A } })
+    ).pack;
     // forceMock=false 才会走注入的 recording provider，从而断言 prompt 文本真实进入调用。
     const runA = expectOk(await runtime.startRun(startRequest(false))).runId;
     await runtime.waitForRun(runA);
@@ -203,7 +211,9 @@ describe('prompt 版本包与 run 绑定', () => {
     expect(systemOf(evidenceCallsA[0]!)).toContain('China');
     expect(systemOf(evidenceCallsA[0]!)).toContain('只输出一个 JSON 对象');
 
-    const packB = expectOk(runtime.savePrompts({ prompts: { evidence: MARK_B } })).pack;
+    const packB = expectOk(
+      runtime.savePrompts({ graphId: 'trend-analysis', prompts: { evidence: MARK_B } })
+    ).pack;
     expect(packB.version).toBe(packA.version + 1);
     expect(packB.digest).not.toBe(packA.digest);
 
@@ -233,7 +243,10 @@ describe('prompt 版本包与 run 绑定', () => {
 
     // 恢复默认：提交默认模板等价于删除覆盖，生成新版本包且 isDefault。
     const restored = expectOk(
-      runtime.savePrompts({ prompts: { evidence: DEFAULT_PROMPT_TEMPLATES.evidence } })
+      runtime.savePrompts({
+        graphId: 'trend-analysis',
+        prompts: { evidence: DEFAULT_PROMPT_TEMPLATES.evidence }
+      })
     ).pack;
     expect(restored.version).toBe(packB.version + 1);
     expect(restored.isDefault).toBe(true);

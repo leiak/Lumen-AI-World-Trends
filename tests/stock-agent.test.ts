@@ -9,7 +9,8 @@ import { buildSampleCsv, importFactsCsv, listStockFacts, stockFactsView } from '
 import { checkDecisionNumbers } from '../electron/main/agent/fact-check.js';
 import { listMemoryView, settleDecisionById } from '../electron/main/agent/memory.js';
 import { STOCK_DEFAULT_BENCHMARK, STOCK_SUBJECT_PREFIX } from '../shared/stock-agent.js';
-import type { AgentRunSummary, FinalDecision, StartRunRequest } from '../shared/agent.js';
+import { AGENT_PROMPT_ROLES, type AgentPromptsSaveRequest, type AgentRunSummary, type FinalDecision, type StartRunRequest } from '../shared/agent.js';
+import { DEFAULT_PROMPT_TEMPLATES, STOCK_PROMPT_TEMPLATES } from '../electron/main/agent/prompt-policy.js';
 
 const NOW = '2026-11-03T10:00:00.000Z';
 const AS_OF = '2026-10-30T10:00:00.000Z';
@@ -468,7 +469,7 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
 
   it('股票 prompt 保存不改变智能体页签 active 包', () => {
     const runtime = makeRuntime(newDb(), new MockProvider());
-    const trendBefore = expectOk(runtime.getPrompts()).pack;
+    const trendBefore = expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack;
     expect(trendBefore.graphId).toBe('trend-analysis');
     expect(trendBefore.version).toBe(0);
 
@@ -485,7 +486,7 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
     expect(stockSaved.graphId).toBe('stock-analysis');
     expect(stockSaved.version).toBeGreaterThan(0);
 
-    const trendAfter = expectOk(runtime.getPrompts()).pack;
+    const trendAfter = expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack;
     expect(trendAfter.version).toBe(trendBefore.version);
     expect(trendAfter.digest).toBe(trendBefore.digest);
     expect(trendAfter.prompts).toEqual({});
@@ -495,6 +496,45 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
     expect(stockAfter.prompts.evidence).toContain('STOCK-SCOPED');
   });
 
+  it('股票与趋势默认模板按作用域独立，保存默认文案不会在对方侧产生 override', () => {
+    const runtime = makeRuntime(newDb(), new MockProvider());
+    const trend = expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack;
+    const stock = expectOk(runtime.getPrompts({ graphId: 'stock-analysis' })).pack;
+
+    // 每个角色的默认文案都属于各自作用域，且互不相同。
+    for (const role of AGENT_PROMPT_ROLES) {
+      expect(trend.defaults[role]).toBe(DEFAULT_PROMPT_TEMPLATES[role]);
+      expect(stock.defaults[role]).toBe(STOCK_PROMPT_TEMPLATES[role]);
+      expect(stock.defaults[role]).not.toBe(trend.defaults[role]);
+    }
+
+    // 保存股票默认文案：股票侧 isDefault 且无 prompts；趋势侧无任何 override。
+    const stockDefaultSaved = expectOk(
+      runtime.savePrompts({ graphId: 'stock-analysis', prompts: { ...STOCK_PROMPT_TEMPLATES } })
+    ).pack;
+    expect(stockDefaultSaved.isDefault).toBe(true);
+    expect(stockDefaultSaved.prompts).toEqual({});
+    expect(expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack.prompts).toEqual({});
+
+    // 保存趋势默认文案：趋势侧无 override，不误判成股票文案。
+    const trendDefaultSaved = expectOk(
+      runtime.savePrompts({ graphId: 'trend-analysis', prompts: { ...DEFAULT_PROMPT_TEMPLATES } })
+    ).pack;
+    expect(trendDefaultSaved.isDefault).toBe(true);
+    expect(trendDefaultSaved.prompts).toEqual({});
+    expect(expectOk(runtime.getPrompts({ graphId: 'stock-analysis' })).pack.isDefault).toBe(true);
+
+    // 反向误判检查：趋势默认 judge 写入股票命名空间，应当视为 override（不是股票默认）。
+    const crossScope = expectOk(
+      runtime.savePrompts({
+        graphId: 'stock-analysis',
+        prompts: { judge: DEFAULT_PROMPT_TEMPLATES.judge }
+      })
+    ).pack;
+    expect(crossScope.prompts.judge).toBe(DEFAULT_PROMPT_TEMPLATES.judge);
+    expect(expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack.prompts).toEqual({});
+  });
+
   it('未知 prompt 命名空间被拒绝，不会误写全局包', () => {
     const runtime = makeRuntime(newDb(), new MockProvider());
     const get = runtime.getPrompts({ graphId: 'unknown-graph' });
@@ -502,20 +542,29 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
     const save = runtime.savePrompts({ graphId: 'unknown-graph', prompts: { final: 'X' } });
     expect(save.ok).toBe(false);
     if (!save.ok) expect(save.code).toBe('E_VALIDATION');
-    expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
+    expect(expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack.version).toBe(0);
   });
 
-  it('空/空白 graphId 不会静默落到 trend-analysis', () => {
+  it('空/空白/缺失 graphId 不会静默落到 trend-analysis', () => {
     const runtime = makeRuntime(newDb(), new MockProvider());
-    for (const graphId of ['', '   ', null as unknown as string]) {
-      const get = runtime.getPrompts({ graphId });
+    for (const graphId of ['', '   ', null as unknown as string, undefined]) {
+      const get = runtime.getPrompts({ graphId } as { graphId: string });
       expect(get.ok).toBe(false);
       if (!get.ok) expect(get.code).toBe('E_VALIDATION');
-      const save = runtime.savePrompts({ graphId, prompts: { final: 'X' } });
+      const save = runtime.savePrompts({ graphId, prompts: { final: 'X' } } as {
+        graphId: string;
+        prompts: { final: string };
+      });
       expect(save.ok).toBe(false);
       if (!save.ok) expect(save.code).toBe('E_VALIDATION');
     }
-    expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
+    // IPC 完全不带 payload 时同样拒绝。
+    expect(runtime.getPrompts().ok).toBe(false);
+    expect(
+      runtime.savePrompts({ prompts: { final: 'X' } } as unknown as AgentPromptsSaveRequest).ok
+    ).toBe(false);
+    expect(runtime.restoreDefaultGraph().ok).toBe(false);
+    expect(expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack.version).toBe(0);
   });
 
   it('股票 run 绑定股票 active 包；改股票 prompt 后旧 run 回放仍用启动时快照', async () => {
@@ -570,7 +619,7 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
     expect(next.prompt?.prompts.evidence).toContain('STOCK-B');
 
     // 智能体页签的 active 包始终未被污染。
-    expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
+    expect(expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack.version).toBe(0);
   });
 
   it('股票图编辑只产生股票版本；trend-analysis active 图不变', () => {

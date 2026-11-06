@@ -288,10 +288,10 @@ export class AgentRuntime {
     return ok({ graphId: req.graphId, version: req.version, deleted: true, promotedVersion });
   }
 
-  restoreDefaultGraph(graphId: string = DEFAULT_GRAPH_ID): AgentIpcResponse<AgentGraphSaveResponse> {
+  restoreDefaultGraph(graphId?: unknown): AgentIpcResponse<AgentGraphSaveResponse> {
     const scope = this.resolveGraphScope(graphId);
     if (!scope) {
-      return error('E_VALIDATION', `未知图命名空间: ${String(graphId)}`);
+      return error('E_VALIDATION', '图命名空间 graphId 必须显式指定（trend-analysis / stock-analysis）');
     }
     const spec = scope === STOCK_GRAPH_ID ? stockGraphSpec(this.now()) : defaultGraphSpec(this.now());
     const validated = validateGraphSpec(spec);
@@ -357,20 +357,22 @@ export class AgentRuntime {
     return ok({ runId: req.runId, events, nextSeq });
   }
 
-  /** 图/prompt 编辑器只允许在这两个独立命名空间内操作，避免跨页签串味。 */
+  /** 图/prompt 编辑器只允许在这两个独立命名空间内操作；必须显式指定，不做全局兜底。 */
   private resolveGraphScope(graphId: unknown): string | null {
-    const id = graphId === undefined ? DEFAULT_GRAPH_ID : graphId;
-    if (typeof id !== 'string' || id.trim().length === 0) return null;
-    const normalized = id.trim();
+    if (typeof graphId !== 'string') return null;
+    const normalized = graphId.trim();
+    if (normalized.length === 0) return null;
     if (normalized !== DEFAULT_GRAPH_ID && normalized !== STOCK_GRAPH_ID) return null;
     return normalized;
   }
 
-  /** P6：指定图命名空间当前生效的角色 prompt 包；缺省 trend-analysis（兼容旧调用）。 */
+  /** P6：指定图命名空间当前生效的角色 prompt 包；graphId 必传，缺失即拒绝。 */
   getPrompts(req?: AgentPromptsGetRequest): AgentIpcResponse<AgentPromptsGetResponse> {
     const requested = (req as { graphId?: unknown } | undefined)?.graphId;
     const scope = this.resolveGraphScope(requested);
-    if (!scope) return error('E_VALIDATION', `未知 prompt 命名空间: ${String(requested)}`);
+    if (!scope) {
+      return error('E_VALIDATION', 'prompt 命名空间 graphId 必须显式指定（trend-analysis / stock-analysis）');
+    }
     return ok({ pack: this.repo.getActivePromptPack(scope) });
   }
 
@@ -378,7 +380,9 @@ export class AgentRuntime {
   savePrompts(req: AgentPromptsSaveRequest): AgentIpcResponse<AgentPromptsSaveResponse> {
     const requested = (req as { graphId?: unknown } | undefined)?.graphId;
     const scope = this.resolveGraphScope(requested);
-    if (!scope) return error('E_VALIDATION', `未知 prompt 命名空间: ${String(requested)}`);
+    if (!scope) {
+      return error('E_VALIDATION', 'prompt 命名空间 graphId 必须显式指定（trend-analysis / stock-analysis）');
+    }
     const raw = (req as { prompts?: unknown } | undefined)?.prompts;
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
       return error('E_VALIDATION', 'prompts 必须是角色到文本的对象');

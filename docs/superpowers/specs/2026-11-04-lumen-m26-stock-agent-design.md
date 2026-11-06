@@ -819,12 +819,14 @@ export interface StockOutcome {
 ### 14.5 验收结果
 
 - `npx tsc --noEmit`：通过，0 错误。
-- `npm test`：**271/271 通过**（59 files；原 263 + 新增 8 个命名空间/编辑隔离用例，含本轮独立审计补充的 2 个）。
+- `npm test`：**272/272 通过**（59 files；原 263 + 新增 9 个命名空间/编辑隔离/默认模板用例，含两轮审计补充的 3 个）。
 - `npm run build`：通过（renderer + electron main + preload）。
 - `LUMEN_SMOKE=1` 启动 smoke：`LUMEN_SMOKE_OK`，`ready: true`，导航栏包含「股票AI分析」。
 - `npm run e2e`：**11/11 通过**（S1–S11，新增 S11 股票编辑与隔离），退出码 0。
 - E2E 断言修正（不涉及产品代码）：S9 只要求“崩溃前已成功节点”的 started 唯一，崩溃瞬间在飞的节点允许同 attempt 重启；S10 改为读取 `agent_node_result.output_json`（事件里的 preview 是带空格的缩进 JSON）；S11 的图断言只查 `is_active=1` 的版本行，避免被旧 v1 行干扰。
 - **命名空间隔离独立审计（2026-11-06）**：逐条核对 prompt get/save/restore、run 启动绑定、审批/断点恢复快照、历史回放与 v18 回填后，未发现跨命名空间写污染；补充“空/空白 graphId 拒绝”“v17→v18 回填后单一 active”“运行中编辑不影响当前 run、新 run 才绑定新包”三组断言。
+- **prompt 默认模板按作用域（2026-11-06）**：`trend-analysis` 继续使用 `DEFAULT_PROMPT_TEMPLATES`；`stock-analysis` 新增 `STOCK_PROMPT_TEMPLATES`（取证/多头/空头/裁决/观察方案/三方风控/最终签署共 9 个角色）。编辑器的 `defaults` 与 `normalizePromptOverrides` 都按 `graphId` 取模板，保存本作用域默认文案不会产生 override，也不会误剥离另一作用域的默认文案。
+- **graphId 必传（2026-11-06）**：`agent:prompts:get` / `agent:prompts:save` / `agent:graphs:restoreDefault` 缺失、空串、空白、未知命名空间统一返回 `E_VALIDATION`，不再兜底 `trend-analysis`；UI 两处调用显式传参，preload/E2E 无直接调用点。旧测试里依赖“不传即 trend”的断言按新契约更新。
 
 ### 14.6 实现时被迫改变的设计假设
 
@@ -833,7 +835,7 @@ export interface StockOutcome {
 3. **取证是链式而非并行**：`market → fundamentals → disclosures → news` 串行，保证每个 `evidence` 有确定入边、复用现有校验；P0 不做并行扇出 + join。
 4. **缺失维度降级发生在 `judge`**：一旦 `missingLayers` 非空，裁决立即降为 `review`（`missing_dimension`）；`fact_check` 仍独立复跑，若同时存在编造数字则 `reviewReason` 改为 `unverified_number`（数字闸门优先级更高）。
 5. **T+5 结算提前到 P0**：设计把结算闭环列在 P1，但用户 P0 先决条件要求主口径 T+5，因此 `memory.ts` 的股票结算在本轮一并落地；P1 只保留“事后归因/基准扩展”。
-6. **股票页签已开放图/prompt 编辑器（P0 收尾，2026-11-06）**：原先因 prompt 包是全局单命名空间而暂缓；本轮用 **v18 `graph_id` 作用域**解决该结构约束。股票页签的图保存/恢复默认/删除版本与 prompt 保存全部显式绑定 `stock-analysis`，主进程 `resolveGraphScope` 只接受 `trend-analysis` / `stock-analysis`，未知作用域直接 `E_VALIDATION`。图编辑器通过 props 注入股票节点池（含 `fact_check`）与股票证据维度，不改动智能体编辑器的默认节点池/维度；条件边、占位符、长度上限、强制尾注等既有护栏原样保留。
+6. **股票页签已开放图/prompt 编辑器（P0 收尾，2026-11-06）**：原先因 prompt 包是全局单命名空间而暂缓；本轮用 **v18 `graph_id` 作用域**解决该结构约束。股票页签的图保存/恢复默认/删除版本与 prompt 保存全部显式绑定 `stock-analysis`，主进程 `resolveGraphScope` 只接受 `trend-analysis` / `stock-analysis`，未知作用域直接 `E_VALIDATION`。图编辑器通过 props 注入股票节点池（含 `fact_check`）与股票证据维度，不改动智能体编辑器的默认节点池/维度；条件边、占位符、长度上限、强制尾注等既有护栏原样保留。**后续收紧（2026-11-06）**：三个图/prompt 入口的 `graphId` 改为必传，缺失不再兜底；股票命名空间拥有独立默认 prompt 模板，编辑器展示与归一化均按作用域取用。
 7. **数字闸门的扫描边界**：只扫叙事字段（`thesis`、`keyRisks`、`factors.mechanism`、`assumptions`），不扫结构字段（`confidence`、`horizonDays`、`magnitude`）；`YYYY-MM-DD` 与 4 位年份不参与匹配。否则任何日期都会把结论打成 `review`。
 8. **窗口参数**：股票页签的“区间”当前只用于事实列表展示与覆盖度过滤，不改变取证/结算口径；结算窗口固定 T+5 交易日。
 

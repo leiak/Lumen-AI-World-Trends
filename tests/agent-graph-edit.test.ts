@@ -374,7 +374,7 @@ describe('P4 图编辑：持久化与校验定位', () => {
     expect(delDraft.deleted).toBe(true);
 
     // 恢复默认：v4 成为 active，节点/边/参数/recursionLimit 与默认图完全一致
-    const restored = expectOk(runtime.restoreDefaultGraph());
+    const restored = expectOk(runtime.restoreDefaultGraph('trend-analysis'));
     expect(restored.version).toBe(4);
     expect(restored.isActive).toBe(true);
     const canonical = defaultGraphSpec(NOW);

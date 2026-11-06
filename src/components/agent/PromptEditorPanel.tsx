@@ -28,11 +28,11 @@ function packsEqual(a: Record<AgentPromptRole, string>, b: Record<AgentPromptRol
 
 export default function PromptEditorPanel({
   onClose,
-  graphId = 'trend-analysis'
+  graphId
 }: {
   onClose: () => void;
-  /** prompt 作用域：股票页签传 stock-analysis，避免污染智能体页签。 */
-  graphId?: string;
+  /** prompt 作用域（必传）：股票页签传 stock-analysis，智能体页签传 trend-analysis。 */
+  graphId: string;
 }) {
   const { t } = useI18n();
   const [pack, setPack] = useState<AgentPromptPackView>();

@@ -156,7 +156,9 @@ describe('prompt 注入面清单（10 项）', () => {
     const runtime = makeRuntime(db, malicious, ['run_inject_malicious']);
     runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
     try {
-      const pack = expectOk(runtime.savePrompts({ prompts: { final: MALICIOUS_PROMPT } })).pack;
+      const pack = expectOk(
+        runtime.savePrompts({ graphId: 'trend-analysis', prompts: { final: MALICIOUS_PROMPT } })
+      ).pack;
       expect(pack.version).toBe(1);
 
       const started = expectOk(await runtime.startRun(startRequest(false)));
@@ -222,7 +224,10 @@ describe('prompt 注入面清单（10 项）', () => {
     const db = newDb();
     const runtime = makeRuntime(db, new MockProvider());
     try {
-      const res = runtime.savePrompts({ prompts: { oracle: 'x' } } as unknown as AgentPromptsSaveRequest);
+      const res = runtime.savePrompts({
+        graphId: 'trend-analysis',
+        prompts: { oracle: 'x' }
+      } as unknown as AgentPromptsSaveRequest);
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.code).toBe('E_VALIDATION');
       // JS 对象键天然去重，重复角色定义不可能出现；未知角色已在上方被拒。
@@ -252,7 +257,9 @@ describe('prompt 注入面清单（10 项）', () => {
     runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
     try {
       const MARK = 'CUSTOM-DRYRUN：你是「世界趋势取证分析师」，围绕 {{subject.label}} 取证。';
-      expectOk(runtime.savePrompts({ prompts: { evidence: MARK } })).pack;
+      expectOk(
+        runtime.savePrompts({ graphId: 'trend-analysis', prompts: { evidence: MARK } })
+      ).pack;
 
       // Mock 路径（forceMock=true）。
       const mockRun = expectOk(await runtime.startRun(startRequest(true))).runId;

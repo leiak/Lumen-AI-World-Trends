@@ -100,8 +100,8 @@ export interface AgentPromptPackView extends AgentPromptPackSnapshot {
 }
 
 export interface AgentPromptsGetRequest {
-  /** 图命名空间；缺省为 trend-analysis（兼容旧调用）。 */
-  graphId?: string;
+  /** 图命名空间（必传）：trend-analysis / stock-analysis。缺失时主进程返回 E_VALIDATION。 */
+  graphId: string;
 }
 
 export interface AgentPromptsGetResponse {
