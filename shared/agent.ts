@@ -88,6 +88,8 @@ export interface AgentPromptPackSnapshot {
 }
 
 export interface AgentPromptPackView extends AgentPromptPackSnapshot {
+  /** prompt 作用域（图命名空间）：trend-analysis / stock-analysis 各自独立 active 包。 */
+  graphId: string;
   createdAt: string;
   updatedAt: string;
   /** true 表示没有覆盖，全部使用内置模板。 */
@@ -97,11 +99,16 @@ export interface AgentPromptPackView extends AgentPromptPackSnapshot {
   placeholders: readonly string[];
 }
 
+export interface AgentPromptsGetRequest {
+  /** 图命名空间；缺省为 trend-analysis（兼容旧调用）。 */
+  graphId?: string;
+}
+
 export interface AgentPromptsGetResponse {
   pack: AgentPromptPackView;
 }
 
-export interface AgentPromptsSaveRequest {
+export interface AgentPromptsSaveRequest extends AgentPromptsGetRequest {
   /** 提交所有角色的编辑值；与默认模板相同的项会被归一化为“未覆盖”。 */
   prompts: Partial<Record<AgentPromptRole, string>>;
 }

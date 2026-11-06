@@ -443,6 +443,7 @@ const zhDict = {
   'agent.editor.field.windowDays': '窗口天数',
   'agent.editor.field.maxRounds': '最大轮数',
   'agent.editor.field.maxTriggers': '最大观察触发',
+  'agent.editor.field.toleranceBps': '数字容差 bps',
   'agent.editor.field.maxDebateRounds': '辩论轮数',
   'agent.editor.field.maxRiskRounds': '风控轮数',
   'agent.editor.field.maxToolRounds': '工具轮数',
@@ -455,6 +456,10 @@ const zhDict = {
   'agent.editor.dimension.sentiment': '情绪',
   'agent.editor.dimension.geopolitics': '地缘',
   'agent.editor.dimension.structure': '结构',
+  'agent.editor.dimension.market': '行情',
+  'agent.editor.dimension.fundamentals': '财报',
+  'agent.editor.dimension.disclosures': '公告',
+  'agent.editor.dimension.news': '舆情',
   'agent.editor.type.memory': '历史教训',
   'agent.editor.type.evidence': '取证',
   'agent.editor.type.bull': '看多',
@@ -464,6 +469,7 @@ const zhDict = {
   'agent.editor.type.risk_aggressive': '激进风控',
   'agent.editor.type.risk_conservative': '保守风控',
   'agent.editor.type.risk_neutral': '中性风控',
+  'agent.editor.type.fact_check': '事实核查（数字闸门）',
   'agent.editor.type.final': '最终结论'
 } as const;
 
@@ -913,6 +919,7 @@ const enDict: Record<I18nKey, string> = {
   'agent.editor.field.windowDays': 'Window days',
   'agent.editor.field.maxRounds': 'Max rounds',
   'agent.editor.field.maxTriggers': 'Max triggers',
+  'agent.editor.field.toleranceBps': 'Number tolerance (bps)',
   'agent.editor.field.maxDebateRounds': 'Debate rounds',
   'agent.editor.field.maxRiskRounds': 'Risk rounds',
   'agent.editor.field.maxToolRounds': 'Tool rounds',
@@ -925,6 +932,10 @@ const enDict: Record<I18nKey, string> = {
   'agent.editor.dimension.sentiment': 'Sentiment',
   'agent.editor.dimension.geopolitics': 'Geopolitics',
   'agent.editor.dimension.structure': 'Structure',
+  'agent.editor.dimension.market': 'Market',
+  'agent.editor.dimension.fundamentals': 'Fundamentals',
+  'agent.editor.dimension.disclosures': 'Disclosures',
+  'agent.editor.dimension.news': 'News',
   'agent.editor.type.memory': 'Memory',
   'agent.editor.type.evidence': 'Evidence',
   'agent.editor.type.bull': 'Bull',
@@ -934,6 +945,7 @@ const enDict: Record<I18nKey, string> = {
   'agent.editor.type.risk_aggressive': 'Risk · aggressive',
   'agent.editor.type.risk_conservative': 'Risk · conservative',
   'agent.editor.type.risk_neutral': 'Risk · neutral',
+  'agent.editor.type.fact_check': 'Fact check (number gate)',
   'agent.editor.type.final': 'Final'
 };
 

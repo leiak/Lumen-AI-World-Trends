@@ -44,6 +44,7 @@ import {
   type AgentGraphDeleteRequest,
   type AgentGraphGetRequest,
   type AgentGraphSaveRequest,
+  type AgentPromptsGetRequest,
   type AgentPromptsSaveRequest,
   type AgentRunsListRequest,
   type EventsPageRequest,
@@ -272,7 +273,8 @@ void app.whenReady().then(async () => {
       getGraph: (payload) => agentRuntime.getGraphView((payload ?? {}) as AgentGraphGetRequest),
       saveGraph: (payload) => agentRuntime.saveGraph((payload ?? {}) as AgentGraphSaveRequest),
       deleteGraph: (payload) => agentRuntime.deleteGraph((payload ?? {}) as AgentGraphDeleteRequest),
-      restoreDefaultGraph: () => agentRuntime.restoreDefaultGraph(),
+      restoreDefaultGraph: (payload) =>
+        agentRuntime.restoreDefaultGraph((payload as { graphId?: string } | undefined)?.graphId),
       run: (payload) => agentRuntime.startRun((payload ?? {}) as StartRunRequest),
       resume: (payload) => agentRuntime.resumeRun((payload ?? {}) as ResumeRunRequest),
       resumeCheckpoint: (payload) =>
@@ -287,7 +289,7 @@ void app.whenReady().then(async () => {
         ),
       getRun: (payload) => agentRuntime.getRun(agentRunId(payload)),
       getEvents: (payload) => agentRuntime.getEvents((payload ?? {}) as EventsPageRequest),
-      promptsGet: () => agentRuntime.getPrompts(),
+      promptsGet: (payload) => agentRuntime.getPrompts((payload ?? {}) as AgentPromptsGetRequest),
       promptsSave: (payload) => agentRuntime.savePrompts((payload ?? {}) as AgentPromptsSaveRequest),
       memoryList: (payload) => {
         const scope = (payload as import('../../shared/agent.js').MemoryListRequest | undefined)?.scope;

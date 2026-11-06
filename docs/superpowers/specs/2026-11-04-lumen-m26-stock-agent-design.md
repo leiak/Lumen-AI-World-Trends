@@ -72,7 +72,7 @@
 #### 1.3.3 零回归红线（必须可验证）
 
 1. 现有默认图 `trend-analysis` v4 的 spec digest 不改；
-2. 现有 248 个用例、6 个 E2E 场景不改断言、全部通过；
+2. 现有 263 个用例、10 个 E2E 场景不改断言、全部通过；
 3. 现有历史 run 升级到 schema v17 后仍可回放（含节点四态、辩论/风控、审批）；
 4. 现有记忆记录的分流默认值不变（不传 `kind` 时行为与 v16 完全一致）。
 
@@ -783,19 +783,22 @@ export interface StockOutcome {
 | 运行时 | `electron/main/agent/memory.ts` | 股票基准快照、T+5（按 K 线序号）结算、T+1/T+20 诊断、数据不足 `insufficient` |
 | IPC | `shared/contracts.ts` / `electron/main/ipc/register.ts` / `electron/main/index.ts` | 5 个事实层通道 + 启动 seed `stockGraphSpec()` |
 | UI | `src/components/StockAgentTab.tsx`（新增）、`src/App.tsx`、`src/i18n/dict.ts`、`src/hooks/useAgentRun.ts`、`src/styles.css` | 独立页签「股票AI分析」、主体输入、覆盖度、结论卡、闸门状态、运行历史、记忆/结算面板、样例下载/CSV 导入/行情快照 |
-| 测试 | `tests/stock-agent.test.ts`（新增） | 迁移、图、事实层、日历、闸门、Mock 全链路、缺失维度、T+5 结算 |
-| E2E | `e2e/agent.e2e.mjs` | 新增 S10 股票页签场景 |
+| 测试 | `tests/stock-agent.test.ts`（新增） | 迁移、图、事实层、日历、闸门、Mock 全链路、缺失维度、T+5 结算、**prompt 命名空间隔离、股票图编辑隔离** |
+| E2E | `e2e/agent.e2e.mjs` | 新增 S10 股票页签场景、**S11 股票图/prompt 编辑与命名空间隔离场景** |
+| prompt 作用域 | `electron/main/db/migrate.ts`、`electron/main/agent/repository.ts`、`runtime.ts`、`shared/agent.ts`、`PromptEditorPanel.tsx`、`StockAgentTab.tsx` | **v18 给 `agent_prompt_pack` 追加 `graph_id`**；股票页签开放图/prompt 编辑，作用域严格限定 `stock-analysis` |
 
 ### 14.2 迁移与新增表
 
 - **v17 只做追加式变更**：`agent_run` 通过 `CREATE agent_run_v17 → INSERT OR IGNORE SELECT → DROP 旧表 → RENAME` 重建，保留 v16 的 30 列且新增 `subject_kind='stock'` 的 CHECK 取值；旧 run 的 `run_id / 事件 / 节点结果 / 决策 / 记忆` 原样保留（迁移测试断言旧 run 仍可读、事件 seq 完整）。
 - **新增表** `stock_fact`：`fact_id`(PK)、`symbol`、`layer`(CHECK market/fundamentals/disclosures/news)、`metric`、`value`、`value_text`、`unit`、`period`、`published_at`、`effective_at`、`source`、`raw_text`、`created_at`；索引 `(symbol, effective_at)` 与 `(symbol, layer, metric, effective_at)`。
 - 没有删除任何 v16 表、列或索引；`schema_version` 由 `16` → `17`。
+- **v18（P0 收尾，append-only）**：`agent_prompt_pack` 追加 `graph_id TEXT NOT NULL DEFAULT 'trend-analysis'` 与索引 `(graph_id, is_active)`；v17 及以前的 prompt 包全部回填为 `trend-analysis`，股票命名空间从版本 0 起步。旧 run 回放仍读取自身 `prompt_version / prompt_digest / prompt_json`，不依赖当前 active 包。`schema_version` 由 `17` → `18`。
 
 ### 14.3 零回归证据
 
 - **默认图不变**：`defaultGraphSpec()` 仍是 `trend-analysis` v4，`digestGraphSpec()` = `93e039e96961e019373ddb867419ea637c20d278cbc0538bddef73c3e48bb642`，该值已硬编码在 `tests/stock-agent.test.ts` 中；任何对默认图的改动都会立即让该用例失败。
-- **旧断言不改**：现有 248 个用例只改了 `db.test.ts` / `insights.test.ts` 的 `schema_version` 期望值（16 → 17），其余断言原样通过；全量 **263/263 通过**（59 个测试文件，新增 15 个股票用例）。
+- **旧断言不改**：原有 263 个用例只改了 `db.test.ts` / `insights.test.ts` 的 `schema_version` 期望值（17 → 18），其余断言原样通过；全量 **269/269 通过**（59 个测试文件，P0 股票相关共新增 21 个用例）。
+- **prompt 零串味**：`tests/stock-agent.test.ts` 断言“保存 `stock-analysis` prompt 后，`trend-analysis` active 包的 version/digest/prompts 完全不变”；反向同理，股票页签保存图只产生 `stock-analysis` v2，`trend-analysis` 仍为 v4 且 digest 不变。
 - **页签隔离**：`useAgentRun` 默认参数仍为 `trend-analysis`，智能体页签不传参；运行列表新增可选 `graphId`，不传时行为与之前一致。E2E S10 在股票页签运行后切回智能体页签，断言历史列表为 0 行。
 - **记忆口径隔离**：`agent:memory:list` 新增可选 `scope`（`trend` / `stock`）；智能体页签传 `trend`，股票页签传 `stock`，不传时保持旧的全量行为。股票决策不再出现在智能体页签的记忆面板。
 - **命名空间校验**：主进程 `validateStart` 强制 `stock-analysis` 图只接受 `kind='stock'` 主体，且 `kind='stock'` 只能跑 `stock-analysis` 图；跨图调用返回 `E_VALIDATION`。
@@ -811,15 +814,16 @@ export interface StockOutcome {
 - T+5 结算：按 K 线序号取 `asOf` 后第 5 个交易日，判定相对 `sh000300` 的超额收益；中性判断以 |excess| ≤ 2% 为命中；T+1/T+20 只写诊断，不影响命中率；数据不足写 `insufficient`。
 - 严格 asOf 截断：事实可见性同时要求 `published_at <= asOf` 与 `effective_at <= asOf`；发布日晚于分析日的财报/公告不会泄漏进历史分析（有单测覆盖）。
 - E2E：`S10` 覆盖“导入样例 → 运行 → 闸门通过 → 审批 → completed”，并校验库内 `graph_id='stock-analysis'`、`subject_kind='stock'`、`stock_fact` 行数、`agent_decision` 留有 `pending` 基准快照（T+5 `resolve_after`）。
+- E2E `S11` 覆盖股票页签开放编辑：加载 `stock-analysis`（含 `fact_check` 节点）→ 改节点名 → 保存为 **stock v2**；股票 prompt 编辑器 `data-graph-id='stock-analysis'`，保存后库内唯一 active prompt 包属于 `stock-analysis`；切回智能体页签断言默认图仍为 **v4 / `93e039…`**、prompt 版本仍为 **0**（零串味）。
 
 ### 14.5 验收结果
 
 - `npx tsc --noEmit`：通过，0 错误。
-- `npm test`：**263/263 通过**（59 files）。
+- `npm test`：**269/269 通过**（59 files；原 263 + 新增 6 个命名空间/编辑隔离用例）。
 - `npm run build`：通过（renderer + electron main + preload）。
 - `LUMEN_SMOKE=1` 启动 smoke：`LUMEN_SMOKE_OK`，`ready: true`，导航栏包含「股票AI分析」。
-- `npm run e2e`：**10/10 通过**（S1–S10，含 S6 流式、S9 checkpoint 恢复、S10 股票页签），退出码 0。
-- E2E 断言修正（不涉及产品代码）：S9 只要求“崩溃前已成功节点”的 started 唯一，崩溃瞬间在飞的节点允许同 attempt 重启；S10 改为读取 `agent_node_result.output_json`（事件里的 preview 是带空格的缩进 JSON）。
+- `npm run e2e`：**11/11 通过**（S1–S11，新增 S11 股票编辑与隔离），退出码 0。
+- E2E 断言修正（不涉及产品代码）：S9 只要求“崩溃前已成功节点”的 started 唯一，崩溃瞬间在飞的节点允许同 attempt 重启；S10 改为读取 `agent_node_result.output_json`（事件里的 preview 是带空格的缩进 JSON）；S11 的图断言只查 `is_active=1` 的版本行，避免被旧 v1 行干扰。
 
 ### 14.6 实现时被迫改变的设计假设
 
@@ -828,7 +832,7 @@ export interface StockOutcome {
 3. **取证是链式而非并行**：`market → fundamentals → disclosures → news` 串行，保证每个 `evidence` 有确定入边、复用现有校验；P0 不做并行扇出 + join。
 4. **缺失维度降级发生在 `judge`**：一旦 `missingLayers` 非空，裁决立即降为 `review`（`missing_dimension`）；`fact_check` 仍独立复跑，若同时存在编造数字则 `reviewReason` 改为 `unverified_number`（数字闸门优先级更高）。
 5. **T+5 结算提前到 P0**：设计把结算闭环列在 P1，但用户 P0 先决条件要求主口径 T+5，因此 `memory.ts` 的股票结算在本轮一并落地；P1 只保留“事后归因/基准扩展”。
-6. **股票页签不暴露图/prompt 编辑器**：组件复用发生在运行时与画布层；为避免作用域泄漏，P0 股票页签只读显示图，不提供编辑入口，编辑器仍只作用于智能体页签的图。后续若要开放，需要给编辑器传入 `graphId` 并限定保存目标。
+6. **股票页签已开放图/prompt 编辑器（P0 收尾，2026-11-06）**：原先因 prompt 包是全局单命名空间而暂缓；本轮用 **v18 `graph_id` 作用域**解决该结构约束。股票页签的图保存/恢复默认/删除版本与 prompt 保存全部显式绑定 `stock-analysis`，主进程 `resolveGraphScope` 只接受 `trend-analysis` / `stock-analysis`，未知作用域直接 `E_VALIDATION`。图编辑器通过 props 注入股票节点池（含 `fact_check`）与股票证据维度，不改动智能体编辑器的默认节点池/维度；条件边、占位符、长度上限、强制尾注等既有护栏原样保留。
 7. **数字闸门的扫描边界**：只扫叙事字段（`thesis`、`keyRisks`、`factors.mechanism`、`assumptions`），不扫结构字段（`confidence`、`horizonDays`、`magnitude`）；`YYYY-MM-DD` 与 4 位年份不参与匹配。否则任何日期都会把结论打成 `review`。
 8. **窗口参数**：股票页签的“区间”当前只用于事实列表展示与覆盖度过滤，不改变取证/结算口径；结算窗口固定 T+5 交易日。
 

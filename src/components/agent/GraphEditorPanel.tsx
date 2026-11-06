@@ -27,7 +27,12 @@ export interface GraphEditorPanelProps {
   onSave: () => void;
   onDeleteVersion: () => void;
   onRestoreDefault: () => void;
+  /** 股票页签专用：新增节点类型与证据维度；缺省沿用世界趋势编辑器配置。 */
+  nodeTypes?: AgentNodeType[];
+  dimensionOptions?: string[];
 }
+
+const DEFAULT_DIMENSIONS = ['heat', 'sentiment', 'geopolitics', 'structure'];
 
 const NODE_TYPES: AgentNodeType[] = [
   'memory',
@@ -74,6 +79,7 @@ function NodeInspector(props: {
   onLabel: (value: string) => void;
   onJoinMode: (value: 'all' | 'any' | undefined) => void;
   onConfig: (field: string, value: string | number) => void;
+  dimensionOptions: string[];
 }) {
   const { t } = useI18n();
   const { node } = props;
@@ -88,6 +94,7 @@ function NodeInspector(props: {
     | 'agent.editor.type.risk_aggressive'
     | 'agent.editor.type.risk_conservative'
     | 'agent.editor.type.risk_neutral'
+    | 'agent.editor.type.fact_check'
     | 'agent.editor.type.final';
 
   return (
@@ -140,7 +147,7 @@ function NodeInspector(props: {
               value={cfg.dimension as string}
               onChange={(e) => props.onConfig('dimension', e.target.value)}
             >
-              {'heat sentiment geopolitics structure'.split(' ').map((d) => (
+              {props.dimensionOptions.map((d) => (
                 <option key={d} value={d}>
                   {t(`agent.editor.dimension.${d}` as 'agent.editor.dimension.heat')}
                 </option>
@@ -183,6 +190,15 @@ function NodeInspector(props: {
           min={1}
           max={6}
           onChange={(v) => props.onConfig('maxTriggers', v)}
+        />
+      )}
+      {node.type === 'fact_check' && (
+        <NumberField
+          label={t('agent.editor.field.toleranceBps')}
+          value={cfg.toleranceBps as number}
+          min={0}
+          max={5000}
+          onChange={(v) => props.onConfig('toleranceBps', v)}
         />
       )}
       {(node.type === 'judge' || node.type === 'final') && (
@@ -367,7 +383,7 @@ export default function GraphEditorPanel(props: GraphEditorPanelProps) {
           }}
         >
           <option value="">{t('agent.editor.addType')}</option>
-          {NODE_TYPES.map((type) => (
+          {(props.nodeTypes ?? NODE_TYPES).map((type) => (
             <option key={type} value={type}>
               {t(`agent.editor.type.${type}` as 'agent.editor.type.memory')}
             </option>
@@ -477,6 +493,7 @@ export default function GraphEditorPanel(props: GraphEditorPanelProps) {
           onLabel={(value) => props.onLabel(selected.id, value)}
           onJoinMode={(value) => props.onJoinMode(selected.id, value)}
           onConfig={(field, value) => props.onConfig(selected.id, field, value)}
+          dimensionOptions={props.dimensionOptions ?? DEFAULT_DIMENSIONS}
         />
       ) : (
         <div className="agent-editor-hint">{t('agent.editor.noSelection')}</div>

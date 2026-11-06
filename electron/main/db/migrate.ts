@@ -478,6 +478,16 @@ CREATE INDEX IF NOT EXISTS idx_stock_fact_symbol ON stock_fact(symbol, layer, ef
 CREATE INDEX IF NOT EXISTS idx_stock_fact_effective ON stock_fact(symbol, effective_at);
 `;
 
+/** M26 P0 收尾：prompt 包按图命名空间隔离（append-only 加列）。
+ *  旧数据全部回填为 trend-analysis；stock-analysis 从空覆盖（版本 0）起步，
+ *  各自维护 active 包，互不污染。旧 run 仍按自身 prompt_version/digest/json 回放。 */
+const MIGRATION_18_ALTERS = [
+  "ALTER TABLE agent_prompt_pack ADD COLUMN graph_id TEXT NOT NULL DEFAULT 'trend-analysis';"
+];
+const MIGRATION_18_DDL = `
+CREATE INDEX IF NOT EXISTS idx_agent_prompt_pack_graph ON agent_prompt_pack(graph_id, is_active);
+`;
+
 function readSchemaVersion(db: Database): number {
   try {
     const res = db.exec("SELECT value FROM meta WHERE key='schema_version'");
@@ -517,9 +527,13 @@ export function migrate(db: Database): void {
   if (existing < 17) {
     db.exec(MIGRATION_17_DDL);
   }
+  if (existing < 18) {
+    for (const stmt of MIGRATION_18_ALTERS) safeAlter(db, stmt);
+    db.exec(MIGRATION_18_DDL);
+  }
   db.exec(
     `DELETE FROM meta WHERE key='schema_version';` +
-      `INSERT INTO meta (key, value) VALUES ('schema_version', '17');`
+      `INSERT INTO meta (key, value) VALUES ('schema_version', '18');`
   );
 }
 

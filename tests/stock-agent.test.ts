@@ -458,3 +458,131 @@ describe('M26 命名空间隔离', () => {
     if (!wrongSubject.ok) expect(wrongSubject.code).toBe('E_VALIDATION');
   });
 });
+
+describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
+  const TREND_DIGEST = '93e039e96961e019373ddb867419ea637c20d278cbc0538bddef73c3e48bb642';
+
+  it('trend-analysis 默认图 digest 未变（零回归基线）', () => {
+    expect(digestGraphSpec(defaultGraphSpec(NOW))).toBe(TREND_DIGEST);
+  });
+
+  it('股票 prompt 保存不改变智能体页签 active 包', () => {
+    const runtime = makeRuntime(newDb(), new MockProvider());
+    const trendBefore = expectOk(runtime.getPrompts()).pack;
+    expect(trendBefore.graphId).toBe('trend-analysis');
+    expect(trendBefore.version).toBe(0);
+
+    const stockBefore = expectOk(runtime.getPrompts({ graphId: 'stock-analysis' })).pack;
+    expect(stockBefore.graphId).toBe('stock-analysis');
+    expect(stockBefore.version).toBe(0);
+
+    const stockSaved = expectOk(
+      runtime.savePrompts({
+        graphId: 'stock-analysis',
+        prompts: { evidence: 'STOCK-SCOPED：围绕 {{subject.label}} 取证。' }
+      })
+    ).pack;
+    expect(stockSaved.graphId).toBe('stock-analysis');
+    expect(stockSaved.version).toBeGreaterThan(0);
+
+    const trendAfter = expectOk(runtime.getPrompts()).pack;
+    expect(trendAfter.version).toBe(trendBefore.version);
+    expect(trendAfter.digest).toBe(trendBefore.digest);
+    expect(trendAfter.prompts).toEqual({});
+
+    const stockAfter = expectOk(runtime.getPrompts({ graphId: 'stock-analysis' })).pack;
+    expect(stockAfter.version).toBe(stockSaved.version);
+    expect(stockAfter.prompts.evidence).toContain('STOCK-SCOPED');
+  });
+
+  it('未知 prompt 命名空间被拒绝，不会误写全局包', () => {
+    const runtime = makeRuntime(newDb(), new MockProvider());
+    const get = runtime.getPrompts({ graphId: 'unknown-graph' });
+    expect(get.ok).toBe(false);
+    const save = runtime.savePrompts({ graphId: 'unknown-graph', prompts: { final: 'X' } });
+    expect(save.ok).toBe(false);
+    if (!save.ok) expect(save.code).toBe('E_VALIDATION');
+    expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
+  });
+
+  it('股票 run 绑定股票 active 包；改股票 prompt 后旧 run 回放仍用启动时快照', async () => {
+    const db = newDb();
+    importSample(db);
+    const runtime = makeRuntime(db, new MockProvider());
+    runtime.ensureDefaultGraph(stockGraphSpec(NOW));
+
+    const packA = expectOk(
+      runtime.savePrompts({
+        graphId: 'stock-analysis',
+        prompts: { evidence: 'STOCK-A：围绕 {{subject.label}} 取证。' }
+      })
+    ).pack;
+    const started = expectOk(await runtime.startRun(request()));
+    await runtime.waitForRun(started.runId);
+    const paused = expectOk(runtime.getRun(started.runId));
+    expect(paused.prompt?.version).toBe(packA.version);
+    expect(paused.prompt?.prompts.evidence).toContain('STOCK-A');
+
+    const packB = expectOk(
+      runtime.savePrompts({
+        graphId: 'stock-analysis',
+        prompts: { evidence: 'STOCK-B：围绕 {{subject.label}} 取证。' }
+      })
+    ).pack;
+    expect(packB.version).toBeGreaterThan(packA.version);
+
+    const replay = expectOk(runtime.getRun(started.runId));
+    expect(replay.prompt?.version).toBe(packA.version);
+    expect(replay.prompt?.digest).toBe(packA.digest);
+    expect(replay.prompt?.prompts.evidence).toContain('STOCK-A');
+    expect(replay.prompt?.prompts.evidence).not.toContain('STOCK-B');
+
+    // 智能体页签的 active 包始终未被污染。
+    expect(expectOk(runtime.getPrompts()).pack.version).toBe(0);
+  });
+
+  it('股票图编辑只产生股票版本；trend-analysis active 图不变', () => {
+    const runtime = makeRuntime(newDb(), new MockProvider());
+    runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
+    runtime.ensureDefaultGraph(stockGraphSpec(NOW));
+
+    const trendSpec = expectOk(runtime.getGraph('trend-analysis'));
+    const trendDigest = digestGraphSpec(trendSpec);
+    expect(trendDigest).toBe(TREND_DIGEST);
+
+    const stockSpec = expectOk(runtime.getGraph('stock-analysis'));
+    const saved = expectOk(
+      runtime.saveGraph({ spec: { ...stockSpec, name: `${stockSpec.name}·编辑版` }, publish: true })
+    );
+    expect(saved.graphId).toBe('stock-analysis');
+    expect(saved.version).toBe(stockSpec.version + 1);
+
+    const stockNow = expectOk(runtime.getGraph('stock-analysis'));
+    expect(stockNow.version).toBe(saved.version);
+    expect(stockNow.name).toContain('编辑版');
+
+    const trendNow = expectOk(runtime.getGraph('trend-analysis'));
+    expect(trendNow.version).toBe(trendSpec.version);
+    expect(digestGraphSpec(trendNow)).toBe(trendDigest);
+  });
+
+  it('股票图恢复默认只影响股票命名空间', () => {
+    const runtime = makeRuntime(newDb(), new MockProvider());
+    runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
+    runtime.ensureDefaultGraph(stockGraphSpec(NOW));
+    const stockSpec = expectOk(runtime.getGraph('stock-analysis'));
+    expectOk(
+      runtime.saveGraph({ spec: { ...stockSpec, name: `${stockSpec.name}·编辑版` }, publish: true })
+    );
+
+    const restored = expectOk(runtime.restoreDefaultGraph('stock-analysis'));
+    expect(restored.graphId).toBe('stock-analysis');
+    expect(restored.version).toBe(stockSpec.version);
+    expect(restored.isActive).toBe(true);
+    expect(restored.spec.nodes).toEqual(stockGraphSpec(NOW).nodes);
+    expect(restored.spec.edges).toEqual(stockGraphSpec(NOW).edges);
+
+    const trendNow = expectOk(runtime.getGraph('trend-analysis'));
+    expect(digestGraphSpec(trendNow)).toBe(TREND_DIGEST);
+  });
+});

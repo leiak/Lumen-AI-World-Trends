@@ -16,6 +16,7 @@ import type {
   AgentPromptIssue,
   AgentPromptPackSnapshot,
   AgentPromptRole,
+  AgentPromptsGetRequest,
   AgentPromptsGetResponse,
   AgentPromptsSaveRequest,
   AgentPromptsSaveResponse,
@@ -69,7 +70,7 @@ import {
 import type { AgentNodeDeps } from './nodes.js';
 import { archiveDecisionBaseline } from './memory.js';
 import { mergeDecisionPatch, reviewDecision } from './structured.js';
-import { computeRecursionLimit, defaultGraphSpec, validateGraphSpec } from './spec.js';
+import { computeRecursionLimit, defaultGraphSpec, stockGraphSpec, validateGraphSpec } from './spec.js';
 
 /** 默认整轮 20-30 次模型调用的上限；P0 四节点实际 4 次。 */
 const MAX_MODEL_CALLS = 30;
@@ -287,8 +288,12 @@ export class AgentRuntime {
     return ok({ graphId: req.graphId, version: req.version, deleted: true, promotedVersion });
   }
 
-  restoreDefaultGraph(): AgentIpcResponse<AgentGraphSaveResponse> {
-    const spec = defaultGraphSpec(this.now());
+  restoreDefaultGraph(graphId: string = DEFAULT_GRAPH_ID): AgentIpcResponse<AgentGraphSaveResponse> {
+    const scope = this.resolveGraphScope(graphId);
+    if (!scope) {
+      return error('E_VALIDATION', `未知图命名空间: ${String(graphId)}`);
+    }
+    const spec = scope === STOCK_GRAPH_ID ? stockGraphSpec(this.now()) : defaultGraphSpec(this.now());
     const validated = validateGraphSpec(spec);
     if (!validated.ok) {
       return error(validated.code, validated.message, { issues: validated.issues });
@@ -352,13 +357,28 @@ export class AgentRuntime {
     return ok({ runId: req.runId, events, nextSeq });
   }
 
-  /** P6：当前生效的角色 prompt 包。 */
-  getPrompts(): AgentIpcResponse<AgentPromptsGetResponse> {
-    return ok({ pack: this.repo.getActivePromptPack() });
+  /** 图/prompt 编辑器只允许在这两个独立命名空间内操作，避免跨页签串味。 */
+  private resolveGraphScope(graphId: unknown): string | null {
+    const id = graphId === undefined ? DEFAULT_GRAPH_ID : graphId;
+    if (typeof id !== 'string' || id.trim().length === 0) return null;
+    const normalized = id.trim();
+    if (normalized !== DEFAULT_GRAPH_ID && normalized !== STOCK_GRAPH_ID) return null;
+    return normalized;
+  }
+
+  /** P6：指定图命名空间当前生效的角色 prompt 包；缺省 trend-analysis（兼容旧调用）。 */
+  getPrompts(req?: AgentPromptsGetRequest): AgentIpcResponse<AgentPromptsGetResponse> {
+    const requested = (req as { graphId?: unknown } | undefined)?.graphId;
+    const scope = this.resolveGraphScope(requested);
+    if (!scope) return error('E_VALIDATION', `未知 prompt 命名空间: ${String(requested)}`);
+    return ok({ pack: this.repo.getActivePromptPack(scope) });
   }
 
   /** P6：保存 prompt 编辑；所有角色错误一次收集，失败即不产生新版本。 */
   savePrompts(req: AgentPromptsSaveRequest): AgentIpcResponse<AgentPromptsSaveResponse> {
+    const requested = (req as { graphId?: unknown } | undefined)?.graphId;
+    const scope = this.resolveGraphScope(requested);
+    if (!scope) return error('E_VALIDATION', `未知 prompt 命名空间: ${String(requested)}`);
     const raw = (req as { prompts?: unknown } | undefined)?.prompts;
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
       return error('E_VALIDATION', 'prompts 必须是角色到文本的对象');
@@ -379,8 +399,8 @@ export class AgentRuntime {
     if (issues.length > 0) {
       return error('E_VALIDATION', 'prompt 校验失败', { issues });
     }
-    const current = this.repo.getActivePromptPack();
-    const pack = this.repo.savePromptPack({ ...current.prompts, ...incoming });
+    const current = this.repo.getActivePromptPack(scope);
+    const pack = this.repo.savePromptPack({ ...current.prompts, ...incoming }, scope);
     return ok({ pack });
   }
 
@@ -419,7 +439,8 @@ export class AgentRuntime {
     }
     const spec = validated.spec;
     const graphDigest = record.digest;
-    const activePrompt = this.repo.getActivePromptPack();
+    // prompt 包严格按本次运行的图命名空间取 active，stock 与 trend 互不影响。
+    const activePrompt = this.repo.getActivePromptPack(spec.id);
     const promptSnapshot: AgentPromptPackSnapshot = {
       version: activePrompt.version,
       digest: activePrompt.digest,

@@ -56,7 +56,7 @@ export interface AgentIpcDeps {
   getGraph: (payload: unknown) => AgentIpcResponse<AgentGraphGetResponse>;
   saveGraph: (payload: unknown) => AgentIpcResponse<AgentGraphSaveResponse>;
   deleteGraph: (payload: unknown) => AgentIpcResponse<AgentGraphDeleteResponse>;
-  restoreDefaultGraph: () => AgentIpcResponse<AgentGraphSaveResponse>;
+  restoreDefaultGraph: (payload?: unknown) => AgentIpcResponse<AgentGraphSaveResponse>;
   run: (payload: unknown) => Promise<AgentIpcResponse<StartRunResponse>>;
   resume: (payload: unknown) => Promise<AgentIpcResponse<ResumeRunResponse>>;
   resumeCheckpoint: (payload: unknown) => Promise<AgentIpcResponse<ResumeCheckpointResponse>>;
@@ -64,7 +64,7 @@ export interface AgentIpcDeps {
   listRuns: (payload: unknown) => AgentIpcResponse<AgentRunSummary[]>;
   getRun: (payload: unknown) => AgentIpcResponse<AgentRunDetail>;
   getEvents: (payload: unknown) => AgentIpcResponse<EventsPage>;
-  promptsGet: () => AgentIpcResponse<AgentPromptsGetResponse>;
+  promptsGet: (payload?: unknown) => AgentIpcResponse<AgentPromptsGetResponse>;
   promptsSave: (payload: unknown) => AgentIpcResponse<AgentPromptsSaveResponse>;
   memoryList: (payload?: unknown) => AgentIpcResponse<MemoryListResponse>;
   memorySettle: () => AgentIpcResponse<MemorySettleResponse>;
@@ -171,7 +171,7 @@ export function registerIpc(deps: IpcDeps): void {
     ipcMain.handle('agent:graphs:get', (_e, payload) => agent.getGraph(payload));
     ipcMain.handle('agent:graphs:save', (_e, payload) => agent.saveGraph(payload));
     ipcMain.handle('agent:graphs:delete', (_e, payload) => agent.deleteGraph(payload));
-    ipcMain.handle('agent:graphs:restoreDefault', () => agent.restoreDefaultGraph());
+    ipcMain.handle('agent:graphs:restoreDefault', (_e, payload) => agent.restoreDefaultGraph(payload));
     ipcMain.handle('agent:run', (_e, payload) => agent.run(payload));
     ipcMain.handle('agent:resume', (_e, payload) => agent.resume(payload));
     ipcMain.handle('agent:runs:resume', (_e, payload) => agent.resume(payload));
@@ -180,7 +180,7 @@ export function registerIpc(deps: IpcDeps): void {
     ipcMain.handle('agent:runs:list', (_e, payload) => agent.listRuns(payload));
     ipcMain.handle('agent:runs:get', (_e, payload) => agent.getRun(payload));
     ipcMain.handle('agent:runs:events', (_e, payload) => agent.getEvents(payload));
-    ipcMain.handle('agent:prompts:get', () => agent.promptsGet());
+    ipcMain.handle('agent:prompts:get', (_e, payload) => agent.promptsGet(payload));
     ipcMain.handle('agent:prompts:save', (_e, payload) => agent.promptsSave(payload));
     ipcMain.handle('agent:memory:list', (_e, payload) => agent.memoryList(payload));
     ipcMain.handle('agent:memory:settle', () => agent.memorySettle());

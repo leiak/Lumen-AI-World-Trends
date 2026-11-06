@@ -44,7 +44,8 @@ describe('insight 仓储', () => {
     db.close();
     // P7：schema 16 新增 checkpoint 持久化表与 run recovery_json 列。
     // M26：schema 17 追加 stock_fact 并放宽 agent_run.subject_kind CHECK。
-    expect(v).toBe('17');
+    // M26 P0 收尾：schema 18 追加 prompt 包 graph_id 作用域。
+    expect(v).toBe('18');
   });
 });
 

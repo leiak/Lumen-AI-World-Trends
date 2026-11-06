@@ -26,7 +26,14 @@ function packsEqual(a: Record<AgentPromptRole, string>, b: Record<AgentPromptRol
   return AGENT_PROMPT_ROLES.every((role) => a[role] === b[role]);
 }
 
-export default function PromptEditorPanel({ onClose }: { onClose: () => void }) {
+export default function PromptEditorPanel({
+  onClose,
+  graphId = 'trend-analysis'
+}: {
+  onClose: () => void;
+  /** prompt 作用域：股票页签传 stock-analysis，避免污染智能体页签。 */
+  graphId?: string;
+}) {
   const { t } = useI18n();
   const [pack, setPack] = useState<AgentPromptPackView>();
   const [drafts, setDrafts] = useState<Record<AgentPromptRole, string>>({} as Record<AgentPromptRole, string>);
@@ -38,7 +45,7 @@ export default function PromptEditorPanel({ onClose }: { onClose: () => void }) 
   const refs = useRef<Partial<Record<AgentPromptRole, HTMLTextAreaElement | null>>>({});
 
   const load = useCallback(async () => {
-    const res = (await window.lumen.invoke('agent:prompts:get')) as InvokeResult | undefined;
+    const res = (await window.lumen.invoke('agent:prompts:get', { graphId })) as InvokeResult | undefined;
     if (!res?.ok || !res.data) {
       setError(res?.message ?? res?.error ?? 'load failed');
       return;
@@ -47,7 +54,7 @@ export default function PromptEditorPanel({ onClose }: { onClose: () => void }) 
     setPack(data.pack);
     setDrafts({ ...data.pack.defaults, ...data.pack.prompts });
     setError('');
-  }, []);
+  }, [graphId]);
 
   useEffect(() => {
     void load();
@@ -73,6 +80,7 @@ export default function PromptEditorPanel({ onClose }: { onClose: () => void }) 
     setIssues([]);
     try {
       const res = (await window.lumen.invoke('agent:prompts:save', {
+        graphId,
         prompts: drafts
       })) as InvokeResult | undefined;
       if (!res?.ok || !res.data) {
@@ -116,7 +124,11 @@ export default function PromptEditorPanel({ onClose }: { onClose: () => void }) 
   };
 
   return (
-    <div className="card agent-prompt-card" data-testid="agent-prompt-editor">
+    <div
+      className="card agent-prompt-card"
+      data-testid="agent-prompt-editor"
+      data-graph-id={graphId}
+    >
       <div className="agent-editor-head">
         <h3>{t('agent.prompt.title')}</h3>
         <div className="agent-editor-actions">

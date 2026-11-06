@@ -231,7 +231,9 @@ export default function AgentTab() {
 
   const onRestoreDefault = async (): Promise<void> => {
     if (!window.confirm(t('agent.editor.restoreConfirm'))) return;
-    const res = (await window.lumen.invoke('agent:graphs:restoreDefault')) as InvokeResult | undefined;
+    const res = (await window.lumen.invoke('agent:graphs:restoreDefault', {
+      graphId: 'trend-analysis'
+    })) as InvokeResult | undefined;
     if (!res?.ok) {
       editor.saveFail(
         res?.details?.issues ?? [],
@@ -559,7 +561,9 @@ export default function AgentTab() {
         </div>
       </div>
 
-      {showPrompts ? <PromptEditorPanel onClose={() => setShowPrompts(false)} /> : null}
+      {showPrompts ? (
+        <PromptEditorPanel graphId="trend-analysis" onClose={() => setShowPrompts(false)} />
+      ) : null}
 
       <div className="card agent-debate-card">
         <div className="agent-debate-head">

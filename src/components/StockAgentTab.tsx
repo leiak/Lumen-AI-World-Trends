@@ -7,10 +7,21 @@ import type {
   StockMarketSyncResponse,
   StockFactLayer
 } from '../../shared/stock-agent';
-import { RATING_LABELS, type MemoryListResponse, type TrendRating } from '../../shared/agent';
+import {
+  RATING_LABELS,
+  type AgentGraphGetResponse,
+  type AgentGraphSaveResponse,
+  type AgentNodeType,
+  type GraphSpecIssue,
+  type MemoryListResponse,
+  type TrendRating
+} from '../../shared/agent';
 import { useAgentRun } from '../hooks/useAgentRun';
+import { useGraphEditor } from '../hooks/useGraphEditor';
 import { useI18n } from '../i18n/I18n';
 import AgentFlowCanvas from './agent/AgentFlowCanvas';
+import GraphEditorPanel from './agent/GraphEditorPanel';
+import PromptEditorPanel from './agent/PromptEditorPanel';
 
 type InvokeResult = {
   ok?: boolean;
@@ -18,6 +29,7 @@ type InvokeResult = {
   error?: string;
   code?: string;
   message?: string;
+  details?: { issues?: GraphSpecIssue[] };
 };
 
 const MAGNITUDE_LABELS: Record<'small' | 'medium' | 'large', string> = {
@@ -25,6 +37,19 @@ const MAGNITUDE_LABELS: Record<'small' | 'medium' | 'large', string> = {
   medium: '中',
   large: '大'
 };
+
+/** 股票图专属节点与维度：不改变世界趋势默认图的编辑器能力。 */
+const STOCK_NODE_TYPES: AgentNodeType[] = [
+  'memory',
+  'evidence',
+  'bull',
+  'bear',
+  'judge',
+  'fact_check',
+  'planner',
+  'final'
+];
+const STOCK_DIMENSIONS = ['market', 'fundamentals', 'disclosures', 'news'];
 
 function dateOnlyNow(): string {
   return new Date().toISOString().slice(0, 10);
@@ -43,12 +68,20 @@ export default function StockAgentTab() {
     state,
     graph,
     viewGraph,
+    graphMeta,
     runs,
     runsLoading,
     start,
     resume,
-    selectRun
+    selectRun,
+    refreshGraph,
+    applySavedGraph
   } = useAgentRun(STOCK_GRAPH_ID);
+  const editor = useGraphEditor();
+  const [editing, setEditing] = useState(false);
+  const [showPrompts, setShowPrompts] = useState(false);
+  const [selectedId, setSelectedId] = useState('');
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | undefined>();
 
   const [symbolInput, setSymbolInput] = useState('sh600519');
   const [asOfDate, setAsOfDate] = useState(dateOnlyNow());
@@ -197,6 +230,92 @@ export default function StockAgentTab() {
     });
   };
 
+  const editingLocked = state.status === 'running' || state.status === 'interrupted';
+
+  const toggleEditing = (): void => {
+    if (editingLocked) return;
+    if (editing) {
+      if (editor.state.dirty && !window.confirm(t('agent.editor.discardConfirm'))) return;
+      setEditing(false);
+      if (graph) editor.load(graph, graphMeta?.digest ?? '');
+      return;
+    }
+    if (!graph) return;
+    editor.load(graph, graphMeta?.digest ?? '');
+    setEditing(true);
+  };
+
+  const reloadActiveGraph = async (): Promise<void> => {
+    const res = (await window.lumen.invoke('agent:graphs:get', {
+      graphId: STOCK_GRAPH_ID
+    })) as InvokeResult | undefined;
+    if (res?.ok) {
+      const snapshot = res.data as AgentGraphGetResponse;
+      applySavedGraph(snapshot.spec, snapshot.digest);
+      editor.load(snapshot.spec, snapshot.digest);
+    } else {
+      await refreshGraph();
+    }
+  };
+
+  const onSaveGraph = async (): Promise<void> => {
+    const draft = editor.state.draft;
+    if (!draft) return;
+    editor.saveStart();
+    const res = (await window.lumen.invoke('agent:graphs:save', {
+      spec: draft,
+      publish: true
+    })) as InvokeResult | undefined;
+    if (!res?.ok) {
+      editor.saveFail(
+        res?.details?.issues ?? [],
+        `${res?.code ?? 'E_VALIDATION'}: ${res?.message ?? res?.error ?? 'save failed'}`
+      );
+      return;
+    }
+    const data = res.data as AgentGraphSaveResponse;
+    editor.saveOk(data.spec, data.digest, new Date().toISOString());
+    applySavedGraph(data.spec, data.digest);
+    setEditing(true);
+  };
+
+  const onDeleteVersion = async (): Promise<void> => {
+    const draft = editor.state.draft;
+    if (!draft) return;
+    if (!window.confirm(t('agent.editor.deleteConfirm', { version: draft.version }))) return;
+    const res = (await window.lumen.invoke('agent:graphs:delete', {
+      graphId: draft.id,
+      version: draft.version
+    })) as InvokeResult | undefined;
+    if (!res?.ok) {
+      editor.saveFail(
+        res?.details?.issues ?? [],
+        `${res?.code ?? 'E_VALIDATION'}: ${res?.message ?? res?.error ?? 'delete failed'}`
+      );
+      return;
+    }
+    await reloadActiveGraph();
+    setEditing(true);
+  };
+
+  const onRestoreDefault = async (): Promise<void> => {
+    if (!window.confirm(t('agent.editor.restoreConfirm'))) return;
+    const res = (await window.lumen.invoke('agent:graphs:restoreDefault', {
+      graphId: STOCK_GRAPH_ID
+    })) as InvokeResult | undefined;
+    if (!res?.ok) {
+      editor.saveFail(
+        res?.details?.issues ?? [],
+        `${res?.code ?? 'E_VALIDATION'}: ${res?.message ?? res?.error ?? 'restore failed'}`
+      );
+      return;
+    }
+    const data = res.data as AgentGraphSaveResponse;
+    editor.saveOk(data.spec, data.digest, new Date().toISOString());
+    applySavedGraph(data.spec, data.digest);
+    setEditing(true);
+  };
+
   const layerLabel = (layer: StockFactLayer): string =>
     t(`stock.factLayer.${layer}` as Parameters<typeof t>[0]);
 
@@ -258,6 +377,21 @@ export default function StockAgentTab() {
           </button>
           <button className="btn" data-testid="stock-download-sample" onClick={() => void onDownloadSample()} disabled={busy}>
             {t('stock.downloadSample')}
+          </button>
+          <button
+            className={`btn${editing ? ' primary' : ''}`}
+            data-testid="stock-edit-toggle"
+            onClick={toggleEditing}
+            disabled={editingLocked || busy}
+          >
+            {editing ? t('agent.editor.exit') : t('agent.editor.edit')}
+          </button>
+          <button
+            className={`btn${showPrompts ? ' primary' : ''}`}
+            data-testid="stock-prompt-toggle"
+            onClick={() => setShowPrompts((v) => !v)}
+          >
+            {showPrompts ? t('agent.prompt.close') : t('agent.prompt.open')}
           </button>
           <input
             ref={fileRef}
@@ -330,10 +464,24 @@ export default function StockAgentTab() {
             <span className="legend-item"><i className="dot error" />{t('agent.legend.error')}</span>
           </div>
           <AgentFlowCanvas
-            spec={canvasSpec}
+            spec={editing ? (editor.state.draft ?? canvasSpec) : canvasSpec}
             nodes={state.nodes}
             streams={state.streams}
-            onSelect={() => undefined}
+            selectedId={editing ? selectedId : undefined}
+            editable={editing}
+            onSelect={
+              editing
+                ? (id) => {
+                    setSelectedId(id);
+                    setSelectedEdgeId(undefined);
+                  }
+                : () => undefined
+            }
+            onSelectEdge={editing ? (id) => { setSelectedEdgeId(id); setSelectedId(''); } : undefined}
+            onNodePosition={editor.position}
+            onConnectEdge={editor.connect}
+            onDeleteNodes={editor.removeNodes}
+            onDeleteEdges={editor.removeEdges}
           />
         </div>
 
@@ -404,6 +552,50 @@ export default function StockAgentTab() {
           <p className="muted">{t('stock.disclaimer')}</p>
         </div>
       </div>
+
+      {editing ? (
+        <div className="card" data-testid="stock-graph-editor">
+          <GraphEditorPanel
+            draft={editor.state.draft}
+            status={graphMeta?.status}
+            activeVersion={graphMeta?.version}
+            dirty={editor.state.dirty}
+            saving={editor.state.saving}
+            issues={editor.state.issues}
+            notice={editor.state.notice}
+            error={editor.state.error}
+            savedAt={editor.state.savedAt}
+            selectedNodeId={selectedId}
+            selectedEdgeId={selectedEdgeId}
+            nodeErrors={{}}
+            onSelectNode={(id) => {
+              setSelectedId(id);
+              setSelectedEdgeId(undefined);
+            }}
+            onSelectEdge={(id) => {
+              setSelectedEdgeId(id);
+              setSelectedId('');
+            }}
+            onEdgeCondition={editor.setEdgeCondition}
+            onEdgeTarget={editor.setEdgeTarget}
+            onEdgeWhenDone={editor.setEdgeWhenDone}
+            onLabel={editor.label}
+            onJoinMode={editor.joinMode}
+            onConfig={editor.config}
+            onSetting={editor.setting}
+            onAddNode={editor.addNode}
+            onSave={() => void onSaveGraph()}
+            onDeleteVersion={() => void onDeleteVersion()}
+            onRestoreDefault={() => void onRestoreDefault()}
+            nodeTypes={STOCK_NODE_TYPES}
+            dimensionOptions={STOCK_DIMENSIONS}
+          />
+        </div>
+      ) : null}
+
+      {showPrompts ? (
+        <PromptEditorPanel graphId={STOCK_GRAPH_ID} onClose={() => setShowPrompts(false)} />
+      ) : null}
 
       <div className="card">
         <div className="agent-debate-head">

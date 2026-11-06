@@ -38,7 +38,8 @@ describe('database', () => {
     expect(has).toBe(true);
     // P7：schema 16 新增 checkpoint 表与 recovery_json 列。
     // M26：v17 追加 stock_fact 表，并重建 agent_run 以放开 subject_kind='stock'（追加式，不改旧列）。
-    expect(row.value).toBe('17');
+    // M26 P0 收尾：v18 给 agent_prompt_pack 追加 graph_id 作用域列（旧数据回填 trend-analysis）。
+    expect(row.value).toBe('18');
     // P4：图草稿/发布状态、spec 摘要与 run 绑定摘要。
     const graphCols = db.exec(`PRAGMA table_info(agent_graph)`);
     const gcols = graphCols[0] ? graphCols[0].values.map((r) => r[1] as string) : [];

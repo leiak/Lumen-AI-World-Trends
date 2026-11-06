@@ -960,6 +960,128 @@ async function main() {
     }
   });
 
+  // ————————————————————————————————————————————————————————————————
+  // M26 P0 收尾：股票页签开放图/prompt 编辑，且作用域严格隔离到 stock-analysis。
+  await scenario('S11 股票页签图/prompt 编辑：只影响股票命名空间，智能体零串味', async () => {
+    const dirI = tmpDir('lumen-e2e-i');
+    const dbI = path.join(dirI, 'lumen.db');
+    const TREND_DIGEST =
+      '93e039e96961e019373ddb867419ea637c20d278cbc0538bddef73c3e48bb642';
+    const { app, page } = await launch(dirI, 80);
+    try {
+      await page.click('[data-testid="nav-stock-agent"]');
+      await page.waitForSelector('[data-testid="stock-start"]', { timeout: 20000 });
+
+      // 打开股票图编辑器：默认应加载 stock-analysis（含 fact_check 节点）。
+      await page.click('[data-testid="stock-edit-toggle"]');
+      await page.waitForSelector('[data-testid="agent-editor-panel"]', { timeout: 20000 });
+      if (!(await page.locator('[data-testid="agent-node-fact_check"]').count())) {
+        throw new Error('股票编辑器未加载 stock-analysis 图（缺少 fact_check 节点）');
+      }
+      // React Flow 节点在 fitView 缩放下可能被画布容器遮挡，直接向节点派发 click。
+      await page.$eval('[data-testid="agent-node-market"]', (el) => {
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      });
+      await page.waitForSelector('[data-testid="agent-editor-inspector"]', { timeout: 20000 });
+      const labelInput = page.locator('[data-testid="agent-editor-inspector"] input').first();
+      await labelInput.fill('E2E-股票行情取证');
+      if ((await page.getAttribute('[data-testid="agent-editor-status"]', 'data-dirty')) !== '1') {
+        throw new Error('股票图编辑后未进入未保存态');
+      }
+      await page.click('[data-testid="agent-editor-save"]');
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="agent-editor-status"]')?.getAttribute('data-dirty') ===
+          '0',
+        null,
+        { timeout: 20000, polling: 25 }
+      );
+
+      // 股票 prompt 编辑：作用域 data-graph-id 必须是 stock-analysis。
+      await page.click('[data-testid="stock-edit-toggle"]');
+      await page.click('[data-testid="stock-prompt-toggle"]');
+      await page.waitForSelector('[data-testid="agent-prompt-editor"]', { timeout: 20000 });
+      const promptScope = await page.getAttribute(
+        '[data-testid="agent-prompt-editor"]',
+        'data-graph-id'
+      );
+      if (promptScope !== 'stock-analysis') {
+        throw new Error(`股票 prompt 编辑器作用域错误：${promptScope}`);
+      }
+      const stockStartVersion = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
+      await page.fill(
+        '[data-testid="agent-prompt-textarea-evidence"]',
+        'E2E-STOCK-PROMPT：围绕 {{subject.label}} 取证。'
+      );
+      await page.click('[data-testid="agent-prompt-save"]');
+      await page.waitForFunction(
+        (prev) => {
+          const el = document.querySelector('[data-testid="agent-prompt-version"]');
+          return !!el && Number(el.getAttribute('data-version')) > prev;
+        },
+        stockStartVersion,
+        { timeout: 20000, polling: 25 }
+      );
+      await page.click('[data-testid="agent-prompt-close"]');
+
+      // 回到智能体页签：默认图 v4 与 prompt 均未被股票编辑污染。
+      await page.click('[data-testid="nav-agent"]');
+      await page.waitForSelector('[data-testid="agent-start"]', { timeout: 20000 });
+      const trendVersion = await page.getAttribute('[data-testid="agent-graph-version"]', 'data-version');
+      const trendDigest = await page.getAttribute('[data-testid="agent-graph-version"]', 'data-digest');
+      if (Number(trendVersion) !== 4 || trendDigest !== TREND_DIGEST) {
+        throw new Error(`智能体默认图被污染：v${trendVersion}/${trendDigest}`);
+      }
+      await page.click('[data-testid="agent-prompt-toggle"]');
+      await page.waitForSelector('[data-testid="agent-prompt-editor"]', { timeout: 20000 });
+      const agentPromptScope = await page.getAttribute(
+        '[data-testid="agent-prompt-editor"]',
+        'data-graph-id'
+      );
+      const agentPromptVersion = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
+      if (agentPromptScope !== 'trend-analysis' || agentPromptVersion !== 0) {
+        throw new Error(`智能体 prompt 被污染：${agentPromptScope} v${agentPromptVersion}`);
+      }
+    } finally {
+      await closeApp(app);
+    }
+
+    await queryDb(dbI, (db) => {
+      const graphs = db.exec(
+        `SELECT graph_id, version, is_active, digest FROM agent_graph
+         WHERE graph_id IN ('trend-analysis','stock-analysis') AND is_active = 1
+         ORDER BY graph_id`
+      );
+      const graphRows = graphs[0]?.values ?? [];
+      if (graphRows.length !== 2) throw new Error(`active 图数量异常：${graphRows.length}`);
+      const trend = graphRows.find((r) => r[0] === 'trend-analysis');
+      const stock = graphRows.find((r) => r[0] === 'stock-analysis');
+      if (!trend) throw new Error('缺少 trend-analysis 图记录');
+      if (Number(trend[1]) !== 4 || Number(trend[2]) !== 1) {
+        throw new Error(`trend-analysis 版本/active 异常：v${trend[1]} active=${trend[2]}`);
+      }
+      if (trend[3] !== TREND_DIGEST) throw new Error(`trend-analysis digest 变化：${trend[3]}`);
+      if (!stock || Number(stock[1]) !== 2 || Number(stock[2]) !== 1) {
+        throw new Error(`stock-analysis 未生成独立 v2：${JSON.stringify(stock)}`);
+      }
+
+      const packs = db.exec(`SELECT graph_id, version, is_active, prompts_json FROM agent_prompt_pack`);
+      const packRows = packs[0]?.values ?? [];
+      if (packRows.length !== 1) throw new Error(`prompt 包数量异常：${packRows.length}`);
+      const pack = packRows[0];
+      if (pack[0] !== 'stock-analysis' || Number(pack[2]) !== 1) {
+        throw new Error(`prompt 包作用域/active 异常：${JSON.stringify(pack)}`);
+      }
+      if (!String(pack[3]).includes('E2E-STOCK-PROMPT')) {
+        throw new Error('股票 prompt 未落库');
+      }
+    });
+  });
+
   console.log('');
   const passed = results.filter((r) => r.ok).length;
   console.log(`E2E 结果：${passed}/${results.length} 通过`);

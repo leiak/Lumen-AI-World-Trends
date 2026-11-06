@@ -315,10 +315,13 @@ export interface AgentRepository {
   /** 恢复默认图：写入指定版本并设为 active，保留其他历史版本。 */
   restoreDefaultGraph(spec: GraphSpec): AgentGraphRecord;
   countRunsForGraphVersion(graphId: string, version: number): number;
-  /** P6：当前生效的 prompt 版本包；无覆盖时为版本 0 的内置默认。 */
-  getActivePromptPack(): AgentPromptPackView;
-  /** P6：保存新的不可变 prompt 版本包；内容未变化时复用当前版本。 */
-  savePromptPack(prompts: Partial<Record<AgentPromptRole, string>>): AgentPromptPackView;
+  /** P6：指定图命名空间下当前生效的 prompt 版本包；无覆盖时为版本 0 的内置默认。 */
+  getActivePromptPack(graphId?: string): AgentPromptPackView;
+  /** P6：在指定图命名空间保存新的不可变 prompt 版本包；内容未变化时复用当前版本。 */
+  savePromptPack(
+    prompts: Partial<Record<AgentPromptRole, string>>,
+    graphId?: string
+  ): AgentPromptPackView;
   insertRun(rec: RunInsert): void;
   updateRunTerminal(rec: RunTerminal): void;
   /** 非终态迁移（interrupted）：保留 ended_at 为空，写入状态快照与已消耗用量。 */
@@ -355,7 +358,7 @@ export interface AgentRepository {
 
 /** persist 由调用方注入（主进程用 saveDatabase，测试用空函数）。 */
 export function createAgentRepository(db: Database, persist: () => void): AgentRepository {
-  function promptPackViewFrom(row: Row | null | undefined): AgentPromptPackView {
+  function promptPackViewFrom(row: Row | null | undefined, graphId: string): AgentPromptPackView {
     const base = {
       defaults: DEFAULT_PROMPT_TEMPLATES,
       limits: { maxSystemChars: PROMPT_MAX_SYSTEM_CHARS, maxRenderedChars: PROMPT_MAX_RENDERED_CHARS },
@@ -369,6 +372,7 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
         isDefault: true,
         createdAt: '',
         updatedAt: '',
+        graphId,
         ...base
       };
     }
@@ -380,6 +384,7 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       isDefault: Object.keys(prompts).length === 0,
       createdAt: str(row.created_at) ?? '',
       updatedAt: str(row.updated_at) ?? '',
+      graphId: str(row.graph_id) ?? graphId,
       ...base
     };
   }
@@ -528,38 +533,45 @@ export function createAgentRepository(db: Database, persist: () => void): AgentR
       return num(row?.n, 0);
     },
 
-    getActivePromptPack() {
+    getActivePromptPack(graphId = 'trend-analysis') {
       const row = one(
         db,
-        'SELECT * FROM agent_prompt_pack WHERE is_active = 1 ORDER BY version DESC LIMIT 1'
+        'SELECT * FROM agent_prompt_pack WHERE graph_id = ? AND is_active = 1 ORDER BY version DESC LIMIT 1',
+        [graphId]
       );
-      return promptPackViewFrom(row);
+      return promptPackViewFrom(row, graphId);
     },
 
-    savePromptPack(prompts) {
+    savePromptPack(prompts, graphId = 'trend-analysis') {
       const normalized = normalizePromptOverrides(prompts);
       const digest = digestPromptOverrides(normalized);
       const current = one(
         db,
-        'SELECT * FROM agent_prompt_pack WHERE is_active = 1 ORDER BY version DESC LIMIT 1'
+        'SELECT * FROM agent_prompt_pack WHERE graph_id = ? AND is_active = 1 ORDER BY version DESC LIMIT 1',
+        [graphId]
       );
       if (current && (str(current.digest) ?? '') === digest) {
-        return promptPackViewFrom(current);
+        return promptPackViewFrom(current, graphId);
       }
       const now = new Date().toISOString();
-      db.exec('UPDATE agent_prompt_pack SET is_active = 0 WHERE is_active = 1');
-      const stmt = db.prepare(
-        `INSERT INTO agent_prompt_pack (digest, prompts_json, is_active, created_at, updated_at)
-         VALUES (?, ?, 1, ?, ?)`
+      const clear = db.prepare(
+        'UPDATE agent_prompt_pack SET is_active = 0 WHERE graph_id = ? AND is_active = 1'
       );
-      stmt.run([digest, JSON.stringify(normalized), now, now]);
+      clear.run([graphId]);
+      clear.free();
+      const stmt = db.prepare(
+        `INSERT INTO agent_prompt_pack (digest, prompts_json, is_active, created_at, updated_at, graph_id)
+         VALUES (?, ?, 1, ?, ?, ?)`
+      );
+      stmt.run([digest, JSON.stringify(normalized), now, now, graphId]);
       stmt.free();
       persist();
       const inserted = one(
         db,
-        'SELECT * FROM agent_prompt_pack WHERE is_active = 1 ORDER BY version DESC LIMIT 1'
+        'SELECT * FROM agent_prompt_pack WHERE graph_id = ? AND is_active = 1 ORDER BY version DESC LIMIT 1',
+        [graphId]
       );
-      return promptPackViewFrom(inserted);
+      return promptPackViewFrom(inserted, graphId);
     },
 
     insertRun(rec) {
