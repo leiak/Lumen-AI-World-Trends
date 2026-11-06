@@ -10,7 +10,11 @@ import { checkDecisionNumbers } from '../electron/main/agent/fact-check.js';
 import { listMemoryView, settleDecisionById } from '../electron/main/agent/memory.js';
 import { STOCK_DEFAULT_BENCHMARK, STOCK_SUBJECT_PREFIX } from '../shared/stock-agent.js';
 import { AGENT_PROMPT_ROLES, type AgentPromptsSaveRequest, type AgentRunSummary, type FinalDecision, type StartRunRequest } from '../shared/agent.js';
-import { DEFAULT_PROMPT_TEMPLATES, STOCK_PROMPT_TEMPLATES } from '../electron/main/agent/prompt-policy.js';
+import {
+  DEFAULT_PROMPT_TEMPLATES,
+  STOCK_PROMPT_TEMPLATES,
+  normalizePromptOverrides
+} from '../electron/main/agent/prompt-policy.js';
 
 const NOW = '2026-11-03T10:00:00.000Z';
 const AS_OF = '2026-10-30T10:00:00.000Z';
@@ -37,13 +41,14 @@ function expectOk<T>(res: { ok: true; data: T } | { ok: false; code: string; mes
 function makeRuntime(
   db: Database,
   provider: AiProvider,
-  now = NOW
+  now = NOW,
+  mockProvider: AiProvider = new MockProvider()
 ): AgentRuntime {
   let i = 0;
   return new AgentRuntime({
     db,
     provider,
-    mockProvider: new MockProvider(),
+    mockProvider,
     persist: () => {},
     send: undefined,
     now: () => now,
@@ -84,6 +89,31 @@ function insertOldRun(db: Database, id: string, kind: string): void {
      VALUES (?, 'trend-analysis', 4, ?, 'completed', 'topic:China', 'China', ?, ?, ?, '{"forceMock":true}')`,
     [id, id, kind, NOW, NOW]
   );
+}
+
+/** 记录真实传给模型的 system prompt，同时复用 MockProvider 的确定性输出。 */
+class RecordingMockProvider extends MockProvider {
+  readonly systems: string[] = [];
+  override async generate(messages: ChatMessage[]): Promise<string> {
+    this.systems.push(
+      messages
+        .filter((m) => m.role === 'system')
+        .map((m) => m.content)
+        .join('\n')
+    );
+    return super.generate(messages);
+  }
+}
+
+/** 读取 prompt 包全部字段（不含自增主键），用于逐字段比对。 */
+function promptPackRows(db: Database): Record<string, unknown>[] {
+  const res = db.exec(
+    `SELECT version, digest, prompts_json, is_active, graph_id, created_at, updated_at
+     FROM agent_prompt_pack ORDER BY version`
+  );
+  if (res.length === 0) return [];
+  const { columns, values } = res[0];
+  return values.map((row) => Object.fromEntries(columns.map((col, i) => [col, row[i]])));
 }
 
 function insertStockDecision(
@@ -665,5 +695,137 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
 
     const trendNow = expectOk(runtime.getGraph('trend-analysis'));
     expect(digestGraphSpec(trendNow)).toBe(TREND_DIGEST);
+  });
+
+  it('归一化边界：跨作用域默认值不被误剥离，空白/换行归一，大小写与内部差异视为 override', () => {
+    const trendDefault = DEFAULT_PROMPT_TEMPLATES.judge;
+    const stockDefault = STOCK_PROMPT_TEMPLATES.judge;
+
+    // 各自作用域的默认 → 剥离。
+    expect(normalizePromptOverrides({ judge: trendDefault }, 'trend-analysis')).toEqual({});
+    expect(normalizePromptOverrides({ judge: stockDefault }, 'stock-analysis')).toEqual({});
+    // 跨作用域默认 → 保留为 override，不误判为默认。
+    expect(normalizePromptOverrides({ judge: trendDefault }, 'stock-analysis')).toEqual({
+      judge: trendDefault
+    });
+    expect(normalizePromptOverrides({ judge: stockDefault }, 'trend-analysis')).toEqual({
+      judge: stockDefault
+    });
+    // 仅首尾空白 / CRLF 差异 → 归一后仍视为默认。
+    expect(
+      normalizePromptOverrides({ judge: `\n  ${stockDefault.replace('\n', '\r\n')}  \n` }, 'stock-analysis')
+    ).toEqual({});
+    // 大小写差异 → 视为 override，不做大小写折叠。
+    expect(
+      normalizePromptOverrides({ judge: stockDefault.toLowerCase() }, 'stock-analysis')
+    ).toEqual({ judge: stockDefault.toLowerCase() });
+    // 内部空格差异 → 视为 override。
+    expect(normalizePromptOverrides({ judge: stockDefault.replace('，', '， ') }, 'stock-analysis')).toEqual({
+      judge: stockDefault.replace('，', '， ')
+    });
+    // 空串/纯空白 → 不产生 override。
+    expect(normalizePromptOverrides({ judge: '   \n ' }, 'stock-analysis')).toEqual({});
+  });
+
+  it('保存股票 prompt 只新增股票 active 行；趋势行逐字段不变', () => {
+    const db = newDb();
+    const runtime = makeRuntime(db, new MockProvider());
+    expectOk(
+      runtime.savePrompts({ graphId: 'trend-analysis', prompts: { evidence: 'TREND-ONLY' } })
+    );
+    const trendRowsBefore = promptPackRows(db).filter((r) => r.graph_id === 'trend-analysis');
+    expect(trendRowsBefore).toHaveLength(1);
+    expect(trendRowsBefore[0].is_active).toBe(1);
+    expect(promptPackRows(db).filter((r) => r.graph_id === 'stock-analysis')).toHaveLength(0);
+
+    const stockPack = expectOk(
+      runtime.savePrompts({ graphId: 'stock-analysis', prompts: { judge: 'STOCK-ONLY' } })
+    ).pack;
+    const rowsAfterStock = promptPackRows(db);
+    const stockRows = rowsAfterStock.filter((r) => r.graph_id === 'stock-analysis');
+    expect(stockRows).toHaveLength(1);
+    expect(stockRows[0].is_active).toBe(1);
+    expect(stockRows[0].digest).toBe(stockPack.digest);
+    expect(Number(stockRows[0].version)).toBe(
+      rowsAfterStock.reduce((max, r) => Math.max(max, Number(r.version)), 0)
+    );
+    expect(JSON.parse(String(stockRows[0].prompts_json))).toEqual({ judge: 'STOCK-ONLY' });
+    // 趋势命名空间的所有行逐字段（version/digest/prompts_json/is_active/graph_id/时间戳）不变。
+    expect(rowsAfterStock.filter((r) => r.graph_id === 'trend-analysis')).toEqual(trendRowsBefore);
+
+    // 同内容重复保存不产生新版本/新行。
+    const same = expectOk(
+      runtime.savePrompts({ graphId: 'stock-analysis', prompts: { judge: 'STOCK-ONLY' } })
+    ).pack;
+    expect(same.version).toBe(stockPack.version);
+    expect(promptPackRows(db)).toHaveLength(rowsAfterStock.length);
+
+    // 新内容才递增版本：旧行转 inactive，新行 active。
+    const next = expectOk(
+      runtime.savePrompts({ graphId: 'stock-analysis', prompts: { judge: 'STOCK-NEXT' } })
+    ).pack;
+    expect(next.version).toBeGreaterThan(stockPack.version);
+    const stockRowsNext = promptPackRows(db).filter((r) => r.graph_id === 'stock-analysis');
+    expect(stockRowsNext).toHaveLength(2);
+    expect(stockRowsNext.filter((r) => r.is_active === 1)).toHaveLength(1);
+    expect(JSON.parse(String(stockRowsNext[1].prompts_json))).toEqual({ judge: 'STOCK-NEXT' });
+    expect(promptPackRows(db).filter((r) => r.graph_id === 'trend-analysis')).toEqual(trendRowsBefore);
+  });
+
+  it('真实 run：启动后改股票 prompt，旧 run 与审批恢复仍用旧系统提示，新 run 用新包', async () => {
+    const db = newDb();
+    importSample(db);
+    const recorder = new RecordingMockProvider();
+    const runtime = makeRuntime(db, new MockProvider(), NOW, recorder);
+    runtime.ensureDefaultGraph(stockGraphSpec(NOW));
+
+    const judgeA = `${STOCK_PROMPT_TEMPLATES.judge}\n[SNAPSHOT-A]`;
+    const finalA = `${STOCK_PROMPT_TEMPLATES.final}\n[SNAPSHOT-A]`;
+    const packA = expectOk(
+      runtime.savePrompts({
+        graphId: 'stock-analysis',
+        prompts: { judge: judgeA, final: finalA }
+      })
+    ).pack;
+
+    const runA = expectOk(await runtime.startRun(request()));
+    await runtime.waitForRun(runA.runId);
+    expect(expectOk(runtime.getRun(runA.runId)).status).toBe('interrupted');
+    const judgeCallsA = recorder.systems.filter((s) => s.includes('裁决者'));
+    expect(judgeCallsA.length).toBeGreaterThan(0);
+    expect(judgeCallsA.every((s) => s.includes('[SNAPSHOT-A]'))).toBe(true);
+    expect(judgeCallsA.some((s) => s.includes('[SNAPSHOT-B]'))).toBe(false);
+
+    // 运行暂停在 final 前，立刻改成 B：恢复时必须仍用 A 执行 final。
+    const judgeB = `${STOCK_PROMPT_TEMPLATES.judge}\n[SNAPSHOT-B]`;
+    const finalB = `${STOCK_PROMPT_TEMPLATES.final}\n[SNAPSHOT-B]`;
+    const packB = expectOk(
+      runtime.savePrompts({
+        graphId: 'stock-analysis',
+        prompts: { judge: judgeB, final: finalB }
+      })
+    ).pack;
+    expect(packB.version).toBeGreaterThan(packA.version);
+
+    const resumedFrom = recorder.systems.length;
+    expectOk(
+      await runtime.resumeRun({ runId: runA.runId, resolution: { type: 'approve' } })
+    );
+    await runtime.waitForRun(runA.runId);
+    const done = expectOk(runtime.getRun(runA.runId));
+    expect(done.status).toBe('completed');
+    expect(done.prompt?.version).toBe(packA.version);
+    // 股票 final 是数字闸门后的确定性签署（不调用模型）；恢复后不得出现新包 B 的任何提示。
+    expect(recorder.systems.slice(resumedFrom).every((s) => !s.includes('[SNAPSHOT-B]'))).toBe(true);
+
+    // 新 run 才用新包 B。
+    const startedB = expectOk(await runtime.startRun(request()));
+    await runtime.waitForRun(startedB.runId);
+    const next = expectOk(runtime.getRun(startedB.runId));
+    expect(next.prompt?.version).toBe(packB.version);
+    const judgeCallsB = recorder.systems
+      .slice(resumedFrom)
+      .filter((s) => s.includes('裁决者') && s.includes('[SNAPSHOT-B]'));
+    expect(judgeCallsB.length).toBeGreaterThan(0);
   });
 });

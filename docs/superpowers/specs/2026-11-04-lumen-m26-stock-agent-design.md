@@ -819,7 +819,7 @@ export interface StockOutcome {
 ### 14.5 验收结果
 
 - `npx tsc --noEmit`：通过，0 错误。
-- `npm test`：**272/272 通过**（59 files；原 263 + 新增 9 个命名空间/编辑隔离/默认模板用例，含两轮审计补充的 3 个）。
+- `npm test`：**275/275 通过**（59 files；原 263 + 12 个命名空间/编辑隔离/默认模板用例，含三轮审计补充的 6 个；`tests/stock-agent.test.ts` 自身 26 个用例）。
 - `npm run build`：通过（renderer + electron main + preload）。
 - `LUMEN_SMOKE=1` 启动 smoke：`LUMEN_SMOKE_OK`，`ready: true`，导航栏包含「股票AI分析」。
 - `npm run e2e`：**11/11 通过**（S1–S11，新增 S11 股票编辑与隔离），退出码 0。
@@ -827,6 +827,7 @@ export interface StockOutcome {
 - **命名空间隔离独立审计（2026-11-06）**：逐条核对 prompt get/save/restore、run 启动绑定、审批/断点恢复快照、历史回放与 v18 回填后，未发现跨命名空间写污染；补充“空/空白 graphId 拒绝”“v17→v18 回填后单一 active”“运行中编辑不影响当前 run、新 run 才绑定新包”三组断言。
 - **prompt 默认模板按作用域（2026-11-06）**：`trend-analysis` 继续使用 `DEFAULT_PROMPT_TEMPLATES`；`stock-analysis` 新增 `STOCK_PROMPT_TEMPLATES`（取证/多头/空头/裁决/观察方案/三方风控/最终签署共 9 个角色）。编辑器的 `defaults` 与 `normalizePromptOverrides` 都按 `graphId` 取模板，保存本作用域默认文案不会产生 override，也不会误剥离另一作用域的默认文案。
 - **graphId 必传（2026-11-06）**：`agent:prompts:get` / `agent:prompts:save` / `agent:graphs:restoreDefault` 缺失、空串、空白、未知命名空间统一返回 `E_VALIDATION`，不再兜底 `trend-analysis`；UI 两处调用显式传参，preload/E2E 无直接调用点。旧测试里依赖“不传即 trend”的断言按新契约更新。
+- **股票 prompt 隔离第三轮审计（2026-11-06，真实执行）**：逐节点核对 system prompt 来源后确认 `fact_check` / `memory` / 股票 `evidence` / 股票 `final` 均为确定性节点、不调用模型，因此 `STOCK_PROMPT_TEMPLATES` 不含 `fact_check` 键不构成覆盖空洞；实际调用模型的 `bull` / `bear` / `judge` / `planner` / `risk_*` 全部有股票默认文案。新增 3 组断言：(a) 归一化边界（跨作用域默认文案原样保留为 override，仅空白/换行差异被归一为默认，大小写与内部标点差异视为 override）；(b) `agent_prompt_pack` 逐字段比对（保存股票 prompt 只新增股票 active 行，趋势行 `version/digest/prompts_json/is_active/graph_id/created_at/updated_at` 全等；同内容重复保存不新增行）；(c) 真实 run 记录每个节点的 system prompt，证明旧 run/审批恢复使用启动时快照 A、新 run 才绑定新包 B。E2E S11 追加“保存失败 + 未保存草稿，切走页签再切回不残留上一命名空间内容”。
 
 ### 14.6 实现时被迫改变的设计假设
 

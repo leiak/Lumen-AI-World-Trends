@@ -1066,6 +1066,42 @@ async function main() {
       if (stockScopeAgain !== 'stock-analysis' || stockVersionAgain !== stockSavedVersion) {
         throw new Error(`股票 prompt 页面状态串味：${stockScopeAgain} v${stockVersionAgain}`);
       }
+
+      // 保存失败 + 未保存草稿：切走页签再切回，不得把上一个命名空间的草稿带回来。
+      await page.fill(
+        '[data-testid="agent-prompt-textarea-evidence"]',
+        'E2E-UNSAVED {{env.ARK_API_KEY}}'
+      );
+      await page.click('[data-testid="agent-prompt-save"]');
+      await page.waitForSelector(
+        '[data-testid="agent-prompt-issue"], [data-testid="agent-prompt-error"]',
+        { timeout: 20000 }
+      );
+      await page.click('[data-testid="nav-agent"]');
+      await page.waitForSelector('[data-testid="agent-start"]', { timeout: 20000 });
+      await page.click('[data-testid="nav-stock-agent"]');
+      await page.waitForSelector('[data-testid="stock-start"]', { timeout: 20000 });
+      await page.click('[data-testid="stock-prompt-toggle"]');
+      await page.waitForSelector('[data-testid="agent-prompt-editor"]', { timeout: 20000 });
+      const scopeAfterDiscard = await page.getAttribute(
+        '[data-testid="agent-prompt-editor"]',
+        'data-graph-id'
+      );
+      const versionAfterDiscard = Number(
+        await page.getAttribute('[data-testid="agent-prompt-version"]', 'data-version')
+      );
+      const valueAfterDiscard = await page.inputValue(
+        '[data-testid="agent-prompt-textarea-evidence"]'
+      );
+      const errorAfterDiscard = await page.locator('[data-testid="agent-prompt-error"]').count();
+      if (scopeAfterDiscard !== 'stock-analysis' || versionAfterDiscard !== stockSavedVersion) {
+        throw new Error(`重开后作用域/版本异常：${scopeAfterDiscard} v${versionAfterDiscard}`);
+      }
+      if (!valueAfterDiscard.includes('E2E-STOCK-PROMPT') || valueAfterDiscard.includes('E2E-UNSAVED')) {
+        throw new Error(`未保存草稿残留：${valueAfterDiscard}`);
+      }
+      if (errorAfterDiscard !== 0) throw new Error('保存失败的错误状态被带到了新编辑器实例');
+      await page.click('[data-testid="agent-prompt-close"]');
     } finally {
       await closeApp(app);
     }
