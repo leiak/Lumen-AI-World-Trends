@@ -56,6 +56,8 @@ export interface AgentNodeDeps {
   approval?: ApprovalResolution;
   /** P6：本次运行绑定的角色 prompt 覆盖；缺省使用内置默认。 */
   prompts?: Partial<Record<AgentPromptRole, string>>;
+  /** 本 run 的图命名空间；无 override 时默认人设按作用域取模板。 */
+  graphId?: string;
 }
 
 export type NodeImplementation = (
@@ -249,7 +251,8 @@ async function runEvidence(
     trends,
     articles,
     state.memoryContext,
-    deps.prompts?.evidence
+    deps.prompts?.evidence,
+    deps.graphId
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -294,7 +297,8 @@ async function runDebate(
     opponentLatest,
     round,
     maxRounds,
-    deps.prompts?.[stance]
+    deps.prompts?.[stance],
+    deps.graphId
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -331,7 +335,8 @@ async function runJudge(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
       reportsOf(state),
       state.debate?.entries ?? [],
       state.memoryContext,
-      deps.prompts?.judge
+      deps.prompts?.judge,
+      deps.graphId
     );
     const { value } = await generateStructured(
       deps.generate,
@@ -358,7 +363,8 @@ async function runJudge(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
     reportsOf(state),
     state.debate?.entries ?? [],
     state.memoryContext,
-    deps.prompts?.judge
+    deps.prompts?.judge,
+    deps.graphId
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -413,7 +419,8 @@ async function runRisk(
     maxRounds,
     deps.prompts?.[
       stance === 'aggressive' ? 'risk_aggressive' : stance === 'conservative' ? 'risk_conservative' : 'risk_neutral'
-    ]
+    ],
+    deps.graphId
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -455,7 +462,8 @@ async function runPlanner(
     state.debate?.entries ?? [],
     state.risk?.entries ?? [],
     maxTriggers,
-    deps.prompts?.planner
+    deps.prompts?.planner,
+    deps.graphId
   );
   const { value, raw } = await generateStructured(
     deps.generate,
@@ -504,7 +512,8 @@ async function runFinal(state: AgentState, deps: AgentNodeDeps): Promise<AgentSt
     state.debate?.entries ?? [],
     state.risk?.entries ?? [],
     state.memoryContext,
-    deps.prompts?.final
+    deps.prompts?.final,
+    deps.graphId
   );
   const { value, raw } = await generateStructured(
     deps.generate,

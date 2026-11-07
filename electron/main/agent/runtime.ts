@@ -985,7 +985,8 @@ export class AgentRuntime {
       generate: this.createGenerate(execution),
       checkCanceled,
       asOf,
-      prompts: execution.prompt.prompts
+      prompts: execution.prompt.prompts,
+      graphId: spec.id
     };
     execution.nodeDeps = nodeDeps;
 
@@ -1067,7 +1068,8 @@ export class AgentRuntime {
       generate: this.createGenerate(execution),
       checkCanceled,
       asOf: snap.asOf,
-      prompts: execution.prompt.prompts
+      prompts: execution.prompt.prompts,
+      graphId: spec.id
     };
 
     const finalNode =

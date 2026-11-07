@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeAll } from 'vitest';
 import initSqlJs, { type Database } from 'sql.js';
 import { migrate } from '../electron/main/db/migrate.js';
@@ -9,11 +10,19 @@ import { buildSampleCsv, importFactsCsv, listStockFacts, stockFactsView } from '
 import { checkDecisionNumbers } from '../electron/main/agent/fact-check.js';
 import { listMemoryView, settleDecisionById } from '../electron/main/agent/memory.js';
 import { STOCK_DEFAULT_BENCHMARK, STOCK_SUBJECT_PREFIX } from '../shared/stock-agent.js';
-import { AGENT_PROMPT_ROLES, type AgentPromptsSaveRequest, type AgentRunSummary, type FinalDecision, type StartRunRequest } from '../shared/agent.js';
+import {
+  AGENT_PROMPT_ROLES,
+  type AgentPromptRole,
+  type AgentPromptsSaveRequest,
+  type AgentRunSummary,
+  type FinalDecision,
+  type StartRunRequest
+} from '../shared/agent.js';
 import {
   DEFAULT_PROMPT_TEMPLATES,
   STOCK_PROMPT_TEMPLATES,
-  normalizePromptOverrides
+  normalizePromptOverrides,
+  promptDefaultGuardsForGraph
 } from '../electron/main/agent/prompt-policy.js';
 
 const NOW = '2026-11-03T10:00:00.000Z';
@@ -95,13 +104,24 @@ function insertOldRun(db: Database, id: string, kind: string): void {
 class RecordingMockProvider extends MockProvider {
   readonly systems: string[] = [];
   override async generate(messages: ChatMessage[]): Promise<string> {
-    this.systems.push(
-      messages
-        .filter((m) => m.role === 'system')
-        .map((m) => m.content)
-        .join('\n')
+    const system = messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n');
+    this.systems.push(system);
+    // 测试里可用 [STOCK-OVERRIDE-<role>] 替换人设；Mock 派发仍按内置角色关键词走。
+    const forMock = messages.map((m) =>
+      m.role === 'system'
+        ? {
+            ...m,
+            content: m.content.replace(
+              /\[STOCK-OVERRIDE-([a-z_]+)\]/,
+              (_all, role: string) => STOCK_PROMPT_TEMPLATES[role as AgentPromptRole] ?? ''
+            )
+          }
+        : m
     );
-    return super.generate(messages);
+    return super.generate(forMock);
   }
 }
 
@@ -114,6 +134,34 @@ function promptPackRows(db: Database): Record<string, unknown>[] {
   if (res.length === 0) return [];
   const { columns, values } = res[0];
   return values.map((row) => Object.fromEntries(columns.map((col, i) => [col, row[i]])));
+}
+
+/** 从真实 run 的 node.started 事件按执行顺序取模型节点类型。 */
+function modelNodeOrder(runtime: AgentRuntime, runId: string, types: Set<string>): string[] {
+  const events = runtime.getEvents({ runId });
+  if (!events.ok) throw new Error(events.message);
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const env of events.data.events) {
+    if (env.event.type !== 'node.started') continue;
+    if (seen.has(env.event.nodeId)) continue;
+    seen.add(env.event.nodeId);
+    if (types.has(env.event.nodeType)) order.push(env.event.nodeType);
+  }
+  return order;
+}
+
+/** 从完整 system prompt 中剔除强制尾注，只留人设段。 */
+function personaLines(system: string, guards: string[]): string {
+  const guardSet = new Set(guards);
+  return system
+    .split('\n')
+    .filter((line) => !guardSet.has(line))
+    .join('\n');
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function insertStockDecision(
@@ -827,5 +875,105 @@ describe('M26 prompt 命名空间与股票编辑器作用域隔离', () => {
       .slice(resumedFrom)
       .filter((s) => s.includes('裁决者') && s.includes('[SNAPSHOT-B]'));
     expect(judgeCallsB.length).toBeGreaterThan(0);
+  });
+
+  it('趋势作用域零行为变化：真实 run 的 system prompt 逐字符基线 + 默认人设与编辑器一致', async () => {
+    const db = newDb();
+    const recorder = new RecordingMockProvider();
+    const runtime = makeRuntime(db, recorder, NOW, recorder);
+    runtime.ensureDefaultGraph(defaultGraphSpec(NOW));
+    const defaults = expectOk(runtime.getPrompts({ graphId: 'trend-analysis' })).pack.defaults;
+
+    const started = expectOk(
+      await runtime.startRun({
+        graphId: 'trend-analysis',
+        subject: { key: 'topic:China', label: 'China', kind: 'topic' },
+        asOf: NOW,
+        options: { forceMock: true }
+      })
+    );
+    await runtime.waitForRun(started.runId);
+    expect(recorder.systems).toHaveLength(10);
+
+    // 改动前从真实 trend run 采集的逐字符基线（10 次模型调用）。
+    const baseline = [
+      '5897e7d82932cfc7a8599d3dce624d010379a34340d1048f5daa9408fe9c20f5',
+      'e5fbf6489c88cfb72bd4df6a29826849017c5e163c5a0a7ef25e8ea73003ccb6',
+      'a7618d9c7e363e7ffd3df6c036bb2b5827eb873006913f3908746d3ec153ce59',
+      'e5fbf6489c88cfb72bd4df6a29826849017c5e163c5a0a7ef25e8ea73003ccb6',
+      'a7618d9c7e363e7ffd3df6c036bb2b5827eb873006913f3908746d3ec153ce59',
+      '7301fe591ca9e14815b1262f984458a1183036124e6444ede01d30c14a114643',
+      'e964a6066a13bb9badbb4b822f42c4ecb8734ece62a0f11d8073b68140098c2c',
+      '004f530b882d5e391df18399913d7a4a90e1382601b4c5519460718fdb7c296c',
+      '64bf608628004f59bab0fceb2511b77a730800c2bbe341f36fd13278614bee56',
+      '88e16b956a2ae9bdaa81a61b4664cbe46647a3ce0a04d31fcc138927d683fa62'
+    ];
+    recorder.systems.forEach((sys, i) => {
+      expect(sha256(sys)).toBe(baseline[i]);
+    });
+
+    const roles: AgentPromptRole[] = [
+      'evidence',
+      'bull',
+      'bear',
+      'bull',
+      'bear',
+      'judge',
+      'planner',
+      'risk_aggressive',
+      'risk_conservative',
+      'risk_neutral'
+    ];
+    roles.forEach((role, i) => {
+      const guards = promptDefaultGuardsForGraph(role, 'trend-analysis', { maxTriggers: 4 });
+      expect(personaLines(recorder.systems[i], guards)).toBe(defaults[role]);
+    });
+  });
+
+  it('股票作用域：7 个模型调用的 system prompt = 编辑器 defaults + 强制尾注；保存 override 后仅替换人设段', async () => {
+    const db = newDb();
+    importSample(db);
+    const recorder = new RecordingMockProvider();
+    const runtime = makeRuntime(db, recorder, NOW, recorder);
+    runtime.ensureDefaultGraph(stockGraphSpec(NOW));
+    const defaults = expectOk(runtime.getPrompts({ graphId: 'stock-analysis' })).pack.defaults;
+    const modelRoles = new Set<string>([
+      'bull',
+      'bear',
+      'judge',
+      'planner',
+      'risk_aggressive',
+      'risk_conservative',
+      'risk_neutral'
+    ]);
+
+    const first = expectOk(await runtime.startRun(request()));
+    await runtime.waitForRun(first.runId);
+    const roles = modelNodeOrder(runtime, first.runId, modelRoles);
+    expect(roles).toHaveLength(7);
+    expect(recorder.systems).toHaveLength(7);
+    roles.forEach((role, i) => {
+      const guards = promptDefaultGuardsForGraph(role as AgentPromptRole, 'stock-analysis', { maxTriggers: 4 });
+      expect(personaLines(recorder.systems[i], guards)).toBe(defaults[role as AgentPromptRole]);
+      expect(recorder.systems[i]).toBe([defaults[role as AgentPromptRole], ...guards].join('\n'));
+    });
+
+    // 保存每个角色的自定义文案后，新 run 的 system prompt 只替换人设段，尾注逐字符不变。
+    const overrides: Partial<Record<AgentPromptRole, string>> = {};
+    for (const role of AGENT_PROMPT_ROLES) overrides[role] = `[STOCK-OVERRIDE-${role}]`;
+    expectOk(runtime.savePrompts({ graphId: 'stock-analysis', prompts: overrides }));
+
+    const offset = recorder.systems.length;
+    const second = expectOk(await runtime.startRun(request()));
+    await runtime.waitForRun(second.runId);
+    const rolesSecond = modelNodeOrder(runtime, second.runId, modelRoles);
+    expect(rolesSecond).toHaveLength(7);
+    const systemsSecond = recorder.systems.slice(offset);
+    expect(systemsSecond).toHaveLength(7);
+    rolesSecond.forEach((role, i) => {
+      const guards = promptDefaultGuardsForGraph(role as AgentPromptRole, 'stock-analysis', { maxTriggers: 4 });
+      expect(systemsSecond[i]).toBe([`[STOCK-OVERRIDE-${role}]`, ...guards].join('\n'));
+      expect(personaLines(systemsSecond[i], guards)).toBe(`[STOCK-OVERRIDE-${role}]`);
+    });
   });
 });

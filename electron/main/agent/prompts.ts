@@ -13,7 +13,8 @@ import type {
 import type { TrendsResult } from '../../../shared/trend.js';
 import type { SourceArticle } from '../../../shared/models.js';
 import type { ChatMessage } from '../ai/provider.js';
-import { composeCustomSystem, type PromptRenderVars } from './prompt-policy.js';
+import { composeCustomSystem, promptDefaultGuardsForGraph, promptTemplatesForGraph, type PromptRenderVars } from './prompt-policy.js';
+import { STOCK_GRAPH_ID } from '../../../shared/stock-agent.js';
 
 const MAX_ARTICLE_TITLE = 200;
 const MAX_ARTICLE_BODY = 600;
@@ -70,12 +71,18 @@ export function buildEvidencePrompt(
   trends: TrendsResult,
   articles: SourceArticle[],
   memoryContext?: string,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const vars: PromptRenderVars = { subject, asOf, memoryContext };
   const system = systemOverride
-    ? composeCustomSystem('evidence', systemOverride, vars)
-    : [
+    ? composeCustomSystem('evidence', systemOverride, vars, graphId)
+    : graphId === STOCK_GRAPH_ID
+      ? [
+          promptTemplatesForGraph(graphId).evidence,
+          ...promptDefaultGuardsForGraph('evidence', graphId)
+        ].join('\n')
+      : [
         '你是「世界趋势取证分析师」，负责热度动量取证。',
         UNTRUSTED_RULE,
         '只使用给定数据；区分事实与推断；数据缺失必须写入 dataGaps，不得把缺失当作“没有发生”。',
@@ -118,7 +125,8 @@ export function buildDebatePrompt(
   opponentLatest: DebateEntry | undefined,
   round: number,
   maxRounds: number,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const role =
     subject.kind === 'stock'
@@ -146,8 +154,13 @@ export function buildDebatePrompt(
     evidenceSummary: evidenceText
   };
   const system = systemOverride
-    ? composeCustomSystem(stance, systemOverride, vars)
-    : [
+    ? composeCustomSystem(stance, systemOverride, vars, graphId)
+    : graphId === STOCK_GRAPH_ID
+      ? [
+          promptTemplatesForGraph(graphId)[stance],
+          ...promptDefaultGuardsForGraph(stance, graphId)
+        ].join('\n')
+      : [
         `你是「${role}」，立场固定为${stanceText}，不得中立。`,
         UNTRUSTED_RULE,
         '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
@@ -199,7 +212,8 @@ export function buildRiskPrompt(
   latestOthers: RiskEntry[],
   round: number,
   maxRounds: number,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const role =
     stance === 'aggressive' ? '激进风控' : stance === 'conservative' ? '保守风控' : '中性风控';
@@ -218,8 +232,13 @@ export function buildRiskPrompt(
     evidenceSummary: debateText
   };
   const system = systemOverride
-    ? composeCustomSystem(roleKey, systemOverride, vars)
-    : [
+    ? composeCustomSystem(roleKey, systemOverride, vars, graphId)
+    : graphId === STOCK_GRAPH_ID
+      ? [
+          promptTemplatesForGraph(graphId)[roleKey],
+          ...promptDefaultGuardsForGraph(roleKey, graphId)
+        ].join('\n')
+      : [
         `你是「${role}」，立场固定为${riskLabel(stance)}，必须挑战其他两方的结论，不得附和。`,
         UNTRUSTED_RULE,
         mandate,
@@ -255,7 +274,8 @@ export function buildPlannerPrompt(
   debate: DebateEntry[],
   risk: RiskEntry[],
   maxTriggers: number,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const vars: PromptRenderVars = {
     subject,
@@ -263,8 +283,13 @@ export function buildPlannerPrompt(
     evidenceSummary: debate.map((e) => `- ${debateEntryText(e)}`).join('\n')
   };
   const system = systemOverride
-    ? composeCustomSystem('planner', systemOverride, vars)
-    : [
+    ? composeCustomSystem('planner', systemOverride, vars, graphId, { maxTriggers })
+    : graphId === STOCK_GRAPH_ID
+      ? [
+          promptTemplatesForGraph(graphId).planner,
+          ...promptDefaultGuardsForGraph('planner', graphId, { maxTriggers })
+        ].join('\n')
+      : [
         '你是「观察方案规划者」，把裁决与三方风控结论翻译成可执行的观察/预警方案。',
         UNTRUSTED_RULE,
         '不做交易指令、不给仓位；只给观察动作、触发条件、失效条件与复核周期。',
@@ -295,25 +320,19 @@ export function buildStockJudgePrompt(
   reports: EvidenceReport[],
   debate: DebateEntry[],
   memoryContext?: string,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const evidenceText = reports
     .map((r) => `- [${r.dimension}] ${r.summary}（置信度 ${r.confidence}，缺口: ${r.dataGaps.join('; ') || '无'}）`)
     .join('\n');
   const vars: PromptRenderVars = { subject, asOf, memoryContext, evidenceSummary: evidenceText };
+  const scope = graphId ?? STOCK_GRAPH_ID;
   const system = systemOverride
-    ? composeCustomSystem('judge', systemOverride, vars)
+    ? composeCustomSystem('judge', systemOverride, vars, scope)
     : [
-        '你是「股票裁决者」，负责对 A 股标的的涨跌方向做裁决，并给出结构化归因分解。',
-        UNTRUSTED_RULE,
-        '只使用取证报告中的本地事实；每个量化数字都必须能在事实表中匹配，并在数字后标注 [fact:<fact_id>]。',
-        '缺失的维度必须写入 stock.missingLayers，不得把缺失当作“没有发生”，也不得编造数据。',
-        '不做交易指令、不给仓位、不承诺收益。',
-        '评级枚举：strong_up | up | neutral | down | strong_down | review。证据不足时用 review。',
-        '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
-        '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选",' +
-          '"stock":{"factors":[{"id":"earnings_surprise|guidance_change|event_driven|sector_market_beta|liquidity_sentiment","label":"","layer":"market|fundamentals|disclosures|news","contribution":"positive|negative|neutral","weight":0到1,"mechanism":"","factIds":["fact_id"]}],' +
-          '"missingLayers":["market|fundamentals|disclosures|news"],"assumptions":[""],"magnitude":"small|medium|large","benchmarkSymbol":"sh000300","referencedFactIds":["fact_id"]}}'
+        promptTemplatesForGraph(scope).judge,
+        ...promptDefaultGuardsForGraph('judge', scope)
       ].join('\n');
   const history = debate.map((e) => `- ${debateEntryText(e)}`).join('\n');
   const user = [
@@ -338,7 +357,8 @@ export function buildFinalPrompt(
   debate: DebateEntry[],
   risk: RiskEntry[],
   memoryContext?: string,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const vars: PromptRenderVars = {
     subject,
@@ -347,7 +367,7 @@ export function buildFinalPrompt(
     evidenceSummary: debate.map((e) => `- ${debateEntryText(e)}`).join('\n')
   };
   const system = systemOverride
-    ? composeCustomSystem('final', systemOverride, vars)
+    ? composeCustomSystem('final', systemOverride, vars, graphId)
     : [
         '你是「最终结论签署者」，在人工审批前给出唯一最终评级与理由。',
         UNTRUSTED_RULE,
@@ -382,7 +402,8 @@ export function buildJudgePrompt(
   reports: EvidenceReport[],
   debate: DebateEntry[],
   memoryContext?: string,
-  systemOverride?: string
+  systemOverride?: string,
+  graphId?: string
 ): ChatMessage[] {
   const vars: PromptRenderVars = {
     subject,
@@ -391,7 +412,7 @@ export function buildJudgePrompt(
     evidenceSummary: reports.map((r) => `- [${r.dimension}] ${r.summary}`).join('\n')
   };
   const system = systemOverride
-    ? composeCustomSystem('judge', systemOverride, vars)
+    ? composeCustomSystem('judge', systemOverride, vars, graphId)
     : [
         '你是「裁决者」，唯一有权给出趋势方向判断的角色。',
         UNTRUSTED_RULE,

@@ -119,9 +119,81 @@ export const STOCK_PROMPT_TEMPLATES: Record<AgentPromptRole, string> = {
   final: '你是「股票最终结论签署者」，在人工审批前给出唯一最终评级与理由。'
 };
 
+/** 股票裁决的 JSON schema 尾注（含 stock 归因字段），与默认路径逐字符一致。 */
+const STOCK_JUDGE_SCHEMA =
+  '{"rating":"strong_up|up|neutral|down|strong_down|review","confidence":0到1,"horizonDays":3到30,"thesis":"不超过400字","keyRisks":[""],"nextCheckAt":"ISO时间","reviewRequired":true|false,"reviewReason":"可选",' +
+  '"stock":{"factors":[{"id":"earnings_surprise|guidance_change|event_driven|sector_market_beta|liquidity_sentiment","label":"","layer":"market|fundamentals|disclosures|news","contribution":"positive|negative|neutral","weight":0到1,"mechanism":"","factIds":["fact_id"]}],' +
+  '"missingLayers":["market|fundamentals|disclosures|news"],"assumptions":[""],"magnitude":"small|medium|large","benchmarkSymbol":"sh000300","referencedFactIds":["fact_id"]}}';
+
+/** 股票作用域的强制尾注：与默认路径内置的安全/契约行逐字符一致，只是与趋势尾注分开维护。 */
+const STOCK_PROMPT_GUARDS: Record<AgentPromptRole, string[]> = {
+  evidence: PROMPT_GUARDS.evidence,
+  bull: [
+    UNTRUSTED_RULE,
+    '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
+    '股票分析：每个量化数字都必须来自取证报告，并在数字后标注 [fact:<fact_id>]；缺失维度不得编造。',
+    '这是计数制辩论：轮次由系统控制，你只需完成本次发言，不要声称“辩论结束”。',
+    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+    '{"stance":"bull","argument":"不超过250字","rebuttals":[{"target":"","point":""}],"evidenceRefs":["sourceId"],"confidence":0到1}'
+  ],
+  bear: [
+    UNTRUSTED_RULE,
+    '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
+    '股票分析：每个量化数字都必须来自取证报告，并在数字后标注 [fact:<fact_id>]；缺失维度不得编造。',
+    '这是计数制辩论：轮次由系统控制，你只需完成本次发言，不要声称“辩论结束”。',
+    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+    '{"stance":"bear","argument":"不超过250字","rebuttals":[{"target":"","point":""}],"evidenceRefs":["sourceId"],"confidence":0到1}'
+  ],
+  judge: [
+    UNTRUSTED_RULE,
+    '只使用取证报告中的本地事实；每个量化数字都必须能在事实表中匹配，并在数字后标注 [fact:<fact_id>]。',
+    '缺失的维度必须写入 stock.missingLayers，不得把缺失当作“没有发生”，也不得编造数据。',
+    '不做交易指令、不给仓位、不承诺收益。',
+    '评级枚举：strong_up | up | neutral | down | strong_down | review。证据不足时用 review。',
+    '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+    STOCK_JUDGE_SCHEMA
+  ],
+  planner: [],
+  risk_aggressive: PROMPT_GUARDS.risk_aggressive,
+  risk_conservative: PROMPT_GUARDS.risk_conservative,
+  risk_neutral: PROMPT_GUARDS.risk_neutral,
+  final: PROMPT_GUARDS.final
+};
+
 /** 按图命名空间选择默认模板；未知命名空间仍按趋势模板，运行时已先做作用域校验。 */
 export function promptTemplatesForGraph(graphId: string): Record<AgentPromptRole, string> {
   return graphId === STOCK_GRAPH_ID ? STOCK_PROMPT_TEMPLATES : DEFAULT_PROMPT_TEMPLATES;
+}
+
+/** 运行期默认路径使用的强制尾注：与各作用域内置默认的尾注逐字符一致。
+ *  trend 的 bull/bear 仍保留“不得把缺失当作没有发生”，planner 的 triggers 上限随配置动态生成，
+ *  其余角色直接复用 PROMPT_GUARDS。股票作用域使用股票版尾注（含 fact 标注与 stock schema）。 */
+export function promptDefaultGuardsForGraph(
+  role: AgentPromptRole,
+  graphId: string,
+  opts?: { maxTriggers?: number }
+): string[] {
+  if (role === 'planner') {
+    const max = opts?.maxTriggers ?? 4;
+    return [
+      UNTRUSTED_RULE,
+      '不做交易指令、不给仓位；只给观察动作、触发条件、失效条件与复核周期。',
+      '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+      `{"action":"watch|alert|escalate|dismiss","summary":"不超过300字","triggers":["最多${max}条"],"invalidations":[""],"reviewInDays":1到30}`
+    ];
+  }
+  if (graphId === STOCK_GRAPH_ID) return STOCK_PROMPT_GUARDS[role];
+  if (role === 'bull' || role === 'bear') {
+    return [
+      UNTRUSTED_RULE,
+      '必须基于取证报告与对手最新发言给出最强论据，并直接回应对手。',
+      '不得把缺失当作“没有发生”。',
+      '这是计数制辩论：轮次由系统控制，你只需完成本次发言，不要声称“辩论结束”。',
+      '只输出一个 JSON 对象，不要 markdown、不要解释。字段：',
+      PROMPT_GUARDS[role][PROMPT_GUARDS[role].length - 1]
+    ];
+  }
+  return PROMPT_GUARDS[role];
 }
 
 export const PROMPT_ROLE_LABELS: Record<AgentPromptRole, string> = {
@@ -184,9 +256,15 @@ export function renderPromptTemplate(
 export function composeCustomSystem(
   role: AgentPromptRole,
   override: string,
-  vars: PromptRenderVars
+  vars: PromptRenderVars,
+  graphId?: string,
+  opts?: { maxTriggers?: number }
 ): string {
-  return [renderPromptTemplate(override, vars), ...PROMPT_GUARDS[role]].join('\n');
+  const guards =
+    graphId === STOCK_GRAPH_ID
+      ? promptDefaultGuardsForGraph(role, graphId, opts)
+      : PROMPT_GUARDS[role];
+  return [renderPromptTemplate(override, vars), ...guards].join('\n');
 }
 
 /** 保存前校验：长度、控制字符、占位符白名单、渲染上限（用固定样本估算）。 */
